@@ -11,7 +11,10 @@ INCLUDE Irvine32.inc
 numholder	DWORD 0
 decten		BYTE 10
 quitflag	BYTE 0
-negflag		BYTE 0
+echoflag	BYTE 0
+
+;========Node Data========;
+MaxNodes	EQU 8
 
 ;========Node Offsets========;
 ;j_length	EQU 14		;Jobs are 14 bytes ea.
@@ -25,6 +28,7 @@ negflag		BYTE 0
 ;j_avail			EQU -1
 ;j_hold			EQU 0
 ;j_run			EQU 1
+
 
 j_statecheck	BYTE -1
 spacechar	BYTE 20h,0					;Space character
@@ -51,9 +55,14 @@ example				BYTE "help!",0
 
 
 main PROC
+	
 	CALL	InitializeNodes
 
 	Engine:
+		CALL	TransmitMessages
+		CALL	UpdateTime
+		CALL	RecieveMessages
+
 		CMP		quitflag,0						;check quit flag
 		JE		Engine
 
@@ -64,6 +73,20 @@ main ENDP
 InitializeNodes PROC
 	ret
 InitializeNodes ENDP
+
+
+UpdateTime PROC
+	ret
+UpdateTime ENDP
+
+TransmitMessages PROC
+	ret
+TransmitMessages ENDP
+
+RecieveMessages PROC
+	ret
+RecieveMessages ENDP
+
 
 
 END main
