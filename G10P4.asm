@@ -20,7 +20,7 @@ MaxNodeCNX			EQU 4							;Max Connections per node
 NodeConstantAlloc		EQU 14
 
 NodeBuffer			DWORD MaxNodes						;
-NodeHeap			BYTE MaxNodes * MaxNodeCNX * NodeConstantAlloc		;This may be right ayyyyyy
+NodeHeap			BYTE MaxNodes * MaxNodeCNX * NodeConstantAlloc dup(0)		;This may be right ayyyyyy
 
 
 ;========Node Offsets========;
