@@ -14,31 +14,31 @@ quitflag	BYTE 0
 echoflag	BYTE 0
 
 ;========Node Data========;
+NumNodes			BYTE 0
 MaxNodes			EQU 8
-MaxNodeCNX			EQU 4
-NodeConstantAlloc	EQU 14
+MaxNodeCNX			EQU 4							;Max Connections per node
+NodeConstantAlloc		EQU 14
 
+NodeBuffer			DWORD MaxNodes						;
 NodeHeap			BYTE MaxNodes * MaxNodeCNX * NodeConstantAlloc		;This may be right ayyyyyy
 
 
 ;========Node Offsets========;
-;j_length	EQU 14		;Jobs are 14 bytes ea.
-;j_name		EQU 0		;Job name (8 bytes alloc)
-;j_pri		EQU 8		;Job priority (1 byte alloc)
-;j_state		EQU 9		;Job state (1 byte alloc)
-;j_loadtime	EQU 10		;Job load-in time (2 bytes alloc)
-;j_runtime	EQU 12		;Job run time (1 byte alloc)
-;j_timerem	EQU 13		;Job time remaining (1 byte alloc)
+n_constantbytes	EQU 14
+n_name		EQU 0
+n_numcnx	EQU 1
+n_queueptr	EQU 2
+n_queueinp	EQU 6
+n_queueout	EQU 10
 
-;j_avail			EQU -1
-;j_hold			EQU 0
-;j_run			EQU 1
+c_cnx_loc	EQU 0
+c_cnx_rcv	EQU 4
+c_cnx_xmt	EQU 8
 
-
-j_statecheck	BYTE -1
+;========Random Values========;
 spacechar	BYTE 20h,0					;Space character
 tabchar		BYTE 9h,0					;Tab character
-newlinechar BYTE 0ah,0
+newlinechar 	BYTE 0ah,0
 
 ;========Misc. Strings========;
 defaultjobname		BYTE "        "		;Not null-terminated intentionally
