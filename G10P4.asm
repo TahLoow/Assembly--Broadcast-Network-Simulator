@@ -14,7 +14,12 @@ quitflag	BYTE 0
 echoflag	BYTE 0
 
 ;========Node Data========;
-MaxNodes	EQU 8
+MaxNodes			EQU 8
+MaxNodeCNX			EQU 4
+NodeConstantAlloc	EQU 14
+
+NodeHeap			BYTE MaxNodes * MaxNodeCNX * NodeConstantAlloc		;This may be right ayyyyyy
+
 
 ;========Node Offsets========;
 ;j_length	EQU 14		;Jobs are 14 bytes ea.
@@ -55,7 +60,6 @@ example				BYTE "help!",0
 
 
 main PROC
-	
 	CALL	InitializeNodes
 
 	Engine:
