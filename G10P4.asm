@@ -13,6 +13,8 @@ decten		BYTE 10
 quitflag	BYTE 0
 echoflag	BYTE 0
 
+fileHandle	DWORD 0
+
 ;========Node Values========;
 n_constantbytes	EQU 14
 n_name		EQU 0
@@ -39,35 +41,42 @@ NodeHeap			BYTE MaxNodes * (n_constantbytes + MaxNodeCNX * NodeConstantAlloc) du
 ;========Buffer Values========;
 inputmax	EQU 100
 inputbuffer	BYTE inputmax+1 dup(0)
+bufferindex	BYTE 0
 
 ;========Random Values========;
-spacechar	BYTE 20h,0					;Space character
-tabchar		BYTE 9h,0					;Tab character
-newlinechar 	BYTE 0ah,0
+spacechar		BYTE 20h,0					;Space character
+tabchar			BYTE 9h,0					;Tab character
+CRchar			BYTE 0Dh					;carriage return
+LFchar			BYTE 0Ah					;line feed
+UpperMask		BYTE 0DFh					;Mask to make alphabetic characters uppercase
+
 
 ;========Misc. Strings========;
-defaultjobname		BYTE "        "		;Not null-terminated intentionally
-emptybuffer			BYTE 8 dup(0)
-printspaces			BYTE "	",0			;blah
+quitchar			BYTE "*"
 
 ;========Output messages========;
 prompt_loadnodemenu1			BYTE "	1: Load from file",0
 prompt_loadnodemenu2			BYTE "	2: Load from keyboard",0
 prompt_loadnodemenu3			BYTE "	3: Load from default",0
-prompt_loadnodemenu4			BYTE "Please make a selection (1-3):",0
-prompt_filepath					BYTE "Please enter a file path: ",0
+prompt_loadnodemenu4			BYTE "Please make a selection (1-3): ",0
+prompt_filepath					BYTE "Please enter a file path, or type ""*"" to exit to menu: ",0
 
 
 filename	BYTE "C:\Users\macle\Desktop\TEST.txt"
 
 ;========Error messages========;
-error_filenotfound				BYTE "File name not found"
-
+error_filenotfound				BYTE "File name not found",0
+error_nodenameinvalid			BYTE "Invalid node name invalid",0
+error_nodeletterssame			BYTE "Invalid format. Node cannot connect to itself",0
 
 .code
 
 
 ;===========Procedure Descriptions===========;
+;SkipSpaces:
+;	Description:		Skips whitespace characters in bufferindex from bufferindex onwards. 
+;	Preconditions:		None
+;	Postconditions:		bufferindex directs towards non-whitespace character. If character is null-terminator, sets carry
 
 
 
@@ -85,6 +94,84 @@ main PROC
 	exit
 main ENDP
 
+ToUpper PROC
+	CMP		al,"a"
+	JL		Done
+	CMP		al,"z"
+	JG		Done
+	AND		al,UpperMask
+
+	Done:
+		ret
+ToUpper ENDP
+
+IsAlphaChar PROC
+	CMP		al,"0"
+	JL		notalphanumeric
+	CMP		al,"Z"
+	JG		notalphanumeric
+	STC
+	JMP		Done
+
+	notalphanumeric:
+		CLC
+
+	Done:
+		ret
+IsAlphaChar ENDP
+
+IsSpaceChar PROC
+	CMP		al,spacechar
+	JE		IsSpace
+	CMP		al,tabchar
+	JE		IsSpace
+	CMP		al,CRchar
+	JE		IsSpace
+	CMP		al,LFchar
+	JE		IsSpace
+
+	CLC
+	JMP		Done
+
+	IsSpace:
+		STC
+		JMP		Done
+
+	Done:
+		ret
+IsSpaceChar ENDP
+
+SkipSpaces PROC
+	PUSH	eax
+	PUSH	ebx
+
+	XOR		ebx,ebx
+	MOV		bl,bufferindex
+
+	CheckSpace:
+		MOV		al,BYTE PTR [inputbuffer+ebx]
+
+		CMP		al,0
+		JE		EndOfBuffer
+
+		CALL	IsSpaceChar
+		JNC		CharFound
+
+		INC		bl
+		JMP		CheckSpace
+
+	EndOfBuffer:
+		STC
+		JMP		Done
+	CharFound:
+		CLC
+		JMP		Done
+	Done:
+		MOV		bufferindex,bl
+		POP		ebx
+		POP		eax
+		ret
+SkipSpaces ENDP
 
 ClearInputBuffer PROC
 	PUSH	ecx
@@ -101,6 +188,9 @@ ClearInputBuffer PROC
 	ret
 ClearInputBuffer ENDP
 
+
+
+
 GetNodesFromFile PROC
 	prompt:
 		MOV		edx,OFFSET prompt_filepath
@@ -109,7 +199,21 @@ GetNodesFromFile PROC
 		MOV		ecx,inputmax
 		CALL	ReadString
 
+		MOV		al,BYTE PTR [inputbuffer]
+		CMP		al,quitchar
+		JE		checkemptybuffer
+		JNE		processfile
+
+	checkemptybuffer:
+		MOV		bufferindex,1
+		CALL	SkipSpaces
+		MOV		bufferindex,0
+		JC		BackToMenu
+		JNC		processfile
+
+	processfile:
 		CALL	OpenInputFile
+		MOV		fileHandle,eax
 
 		CALL	ClearInputBuffer
 
@@ -117,16 +221,71 @@ GetNodesFromFile PROC
 		MOV		ecx,inputmax
 		CALL	ReadFromFile
 		JC		filenotfound
-		JNC		filefound
+		JNC		parsefile
 
-	filefound:
-		
-		JMP		Done
+	parsefile:
+		MOV		bl,0
+		MOV		bufferindex,0
+
+		getnextpair:
+			CALL	SkipSpaces
+			JC		endoffile
+
+			MOV		edx,OFFSET inputbuffer
+			MOVSX	ecx,bufferindex
+			ADD		edx,ecx
+			getfirstnode:
+				MOV		al,BYTE PTR [edx]
+				CALL	ToUpper
+				MOV		cl,al									;cl stores first node letter.
+				CALL	IsAlphaChar
+				JNC		nodenameinvalid
+
+			getsecondnode:
+				INC		edx
+
+				MOV		al,BYTE PTR [edx]
+				CALL	ToUpper
+				CMP		al,cl
+				JE		nodeletterssame
+				CALL	IsAlphaChar
+				JNC		nodenameinvalid
+
+				ADD		bufferindex,2							;buffer now points to the character after the pair of nodes
+
+				;check if node letter is unique
+				;if so, create node
+				;post-creation, make connections in this scope
+
+				JMP		getnextpair
+
+		endoffile:
+			
+			JMP		Loadsuccessful
+	nodenameinvalid:
+		MOV		edx,OFFSET error_nodenameinvalid
+		CALL	WriteString
+		JMP		BackToMenu
+	nodeletterssame:
+		MOV		edx,OFFSET error_nodeletterssame
+		CALL	WriteString
+		JMP		BackToMenu
 	filenotfound:
 		MOV		edx,OFFSET error_filenotfound
 		CALL	WriteString
 		CALL	Crlf
 		JMP		prompt
+
+	BackToMenu:
+		CALL	Crlf
+		CALL	Crlf
+		STC
+		JMP		Done
+	Loadsuccessful:
+		MOV		eax,fileHandle
+		CALL	CloseFile
+		CLC
+		JMP		Done
 	Done:
 		ret
 GetNodesFromFile ENDP
@@ -144,7 +303,6 @@ InitializeNodes PROC
 		CALL	Crlf
 		MOV		edx,OFFSET prompt_loadnodemenu4
 		CALL	WriteString
-		CALL	Crlf
 
 		MOV		edx,OFFSET inputbuffer
 		MOV		ecx,inputmax
@@ -160,6 +318,7 @@ InitializeNodes PROC
 
 	selection1:
 		CALL	GetNodesFromFile
+		JC		promptloadtype
 		JMP		finalize
 
 	selection2:
