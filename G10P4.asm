@@ -31,10 +31,11 @@ c_cnx_xmt	EQU 8
 ;========Node Data========;
 NumNodes			BYTE 0
 MaxNodes			EQU 8
-MaxNodeCNX			EQU 4							;Max Connections per node
+MaxNodeCNX			EQU 4										;Max Connections per node
 NodeConstantAlloc	EQU 14
 
-NodeBuffer			DWORD MaxNodes					;List of node pointers
+NodeNames			BYTE MaxNodes * MaxNodeCNX dup(0)			;List of all node names, plus MaxNodeCNX bytes for each node to store the connection names from given node.
+NodeBuffer			DWORD MaxNodes								;List of node pointers
 NodeHeap			BYTE MaxNodes * (n_constantbytes + MaxNodeCNX * NodeConstantAlloc) dup(0)
 
 
@@ -65,10 +66,10 @@ prompt_filepath					BYTE "Please enter a file path, or type ""*"" to exit to men
 filename	BYTE "C:\Users\macle\Desktop\TEST.txt"
 
 ;========Error messages========;
-error_filenotfound				BYTE "File name not found",0
-error_nodenameinvalid			BYTE "Invalid node name invalid",0
-error_nodeletterssame			BYTE "Invalid format. Node cannot connect to itself",0
-
+error_file_notfound					BYTE "File name not found",0
+error_file_nodenameinvalid			BYTE "Invalid node name invalid",0
+error_file_dualconnection			BYTE "Invalid format. Node cannot connect to itself",0
+error_file_maxnodesdefined			BYTE "Too many nodes declared",0
 .code
 
 
@@ -190,6 +191,70 @@ ClearInputBuffer ENDP
 
 
 
+DeclareNodeA PROC
+	PUSHA
+
+	MOV		edx,SIZEOF NodeNames
+	XOR		edi,edi
+
+	node_checkdeclared:
+		CMP		BYTE PTR [edi+NodeNames],al
+		JE		node_declared
+		CMP		BYTE PTR [edi+edx],0
+		JE		node_undeclared
+
+		ADD		edi,MaxNodeCNX						;edi is the counter for NodeNames records. Each record holds the node's name, and all connected node names. 
+		
+		MOV		cl,SIZEOF NodeNames
+		CMP		edi,ebx
+		JGE		Fail_CapHit
+		JMP		node_checkdeclared
+
+	node_undeclared:
+		MOV		BYTE PTR [edi+edx],al
+		JMP		Success
+	node_declared:
+		JMP		Success
+
+	
+	Fail_CapHit:
+		STC
+		JMP		Done
+	Success:
+		CLC
+		JMP		Done
+	Done:
+		POPA
+		ret
+DeclareNodeA ENDP
+
+
+DeclareNodePair PROC				;al and bl each hold a character that represents a node's name. "Declare" meaning they want a node of name X. This does NOT mean space is allocated for the node.
+									;DeclareNodePair sorts given node pairs into NodeNames.
+	PUSH	edi
+	PUSH	ebx
+	PUSH	edx
+
+	MOV		cl,al					;cl holds node a as temp
+
+	CALL	DeclareNodeA
+	JC		Fail_CapHit
+
+	Success:
+		CLC
+		JMP		Done
+	Fail_CapHit:
+		MOV		edx,OFFSET error_file_maxnodesdefined
+		CALL	WriteString
+		CALL	Crlf
+		STC
+		JMP		Done
+	Done:
+		POP		edx
+		PUSH	ebx
+		POP		edi
+		ret
+DeclareNodePair ENDP
 
 GetNodesFromFile PROC
 	prompt:
@@ -224,7 +289,7 @@ GetNodesFromFile PROC
 		JNC		parsefile
 
 	parsefile:
-		MOV		bl,0
+		MOV		cl,0
 		MOV		bufferindex,0
 
 		getnextpair:
@@ -237,7 +302,7 @@ GetNodesFromFile PROC
 			getfirstnode:
 				MOV		al,BYTE PTR [edx]
 				CALL	ToUpper
-				MOV		cl,al									;cl stores first node letter.
+				MOV		bl,al								;cl stores first node letter.
 				CALL	IsAlphaChar
 				JNC		nodenameinvalid
 
@@ -246,36 +311,37 @@ GetNodesFromFile PROC
 
 				MOV		al,BYTE PTR [edx]
 				CALL	ToUpper
-				CMP		al,cl
+				CMP		al,bl
 				JE		nodeletterssame
 				CALL	IsAlphaChar
 				JNC		nodenameinvalid
 
-				ADD		bufferindex,2							;buffer now points to the character after the pair of nodes
+				ADD		bufferindex,2						;buffer now points to the character after the pair of nodes
 
-				;check if node letter is unique
-				;if so, create node
-				;post-creation, make connections in this scope
+				CALL	DeclareNodePair
+				JC		BackToMenu
 
 				JMP		getnextpair
 
 		endoffile:
 			
+			;look through NodeNames, make sure every node in the network is used
+
 			JMP		Loadsuccessful
 	nodenameinvalid:
-		MOV		edx,OFFSET error_nodenameinvalid
+		MOV		edx,OFFSET error_file_nodenameinvalid
 		CALL	WriteString
 		JMP		BackToMenu
 	nodeletterssame:
-		MOV		edx,OFFSET error_nodeletterssame
+		MOV		edx,OFFSET error_file_dualconnection
 		CALL	WriteString
 		JMP		BackToMenu
 	filenotfound:
-		MOV		edx,OFFSET error_filenotfound
+		MOV		edx,OFFSET error_file_notfound
 		CALL	WriteString
 		CALL	Crlf
 		JMP		prompt
-
+		
 	BackToMenu:
 		CALL	Crlf
 		CALL	Crlf
@@ -289,6 +355,12 @@ GetNodesFromFile PROC
 	Done:
 		ret
 GetNodesFromFile ENDP
+
+GetNodesFromKeyboard PROC
+	
+	Done:
+		ret
+GetNodesFromKeyboard ENDP
 
 InitializeNodes PROC
 	promptloadtype:
