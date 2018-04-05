@@ -1,423 +1,461 @@
-title Multitasking Operating System Simulator
-; Program 3
-; Group 10
-; Paul MacLean, Mark Blatnik, Tyler Harclerode
-; March 1, 2018
+;title Assembly Program 2
+;Paul MacLean, Mark Blatnik, DaNell Griffin
+;January 19, 2018
 
 INCLUDE Irvine32.inc
 
 .data
 
-numholder	DWORD 0
-decten		BYTE 10
-quitflag	BYTE 0
-echoflag	BYTE 0
+maxjobs			EQU 10
 
-fileHandle	DWORD 0
+priorityoffset	EQU 0
+statusoffset	EQU	4
+runtimeoffset	EQU	8		
+starttimeoffset	EQU	12
+nameoffset		EQU 16
 
-;========Node Values========;
-n_constantbytes	EQU 14
-n_name		EQU 0
-n_numcnx	EQU 1
-n_queueptr	EQU 2
-n_queueinp	EQU 6
-n_queueout	EQU 10
+namecharmax		EQU 8
 
-c_cnx_loc	EQU 0
-c_cnx_rcv	EQU 4
-c_cnx_xmt	EQU 8
-
-
-;========Node Data========;
-NumNodes			BYTE 0
-MaxNodes			EQU 8
-MaxNodeCNX			EQU 4										;Max Connections per node
-NodeConstantAlloc	EQU 14
-
-NodeNames			BYTE MaxNodes * MaxNodeCNX dup(0)			;List of all node names, plus MaxNodeCNX bytes for each node to store the connection names from given node.
-NodeBuffer			DWORD MaxNodes								;List of node pointers
-NodeHeap			BYTE MaxNodes * (n_constantbytes + MaxNodeCNX * NodeConstantAlloc) dup(0)
-
-
-;========Buffer Values========;
-inputmax	EQU 100
-inputbuffer	BYTE inputmax+1 dup(0)
-bufferindex	BYTE 0
-
-;========Random Values========;
-spacechar		BYTE 20h,0					;Space character
-tabchar			BYTE 9h,0					;Tab character
-CRchar			BYTE 0Dh					;carriage return
-LFchar			BYTE 0Ah					;line feed
-UpperMask		BYTE 0DFh					;Mask to make alphabetic characters uppercase
-
-
-;========Misc. Strings========;
-quitchar			BYTE "*"
-
-;========Output messages========;
-prompt_loadnodemenu1			BYTE "	1: Load from file",0
-prompt_loadnodemenu2			BYTE "	2: Load from keyboard",0
-prompt_loadnodemenu3			BYTE "	3: Load from default",0
-prompt_loadnodemenu4			BYTE "Please make a selection (1-3): ",0
-prompt_filepath					BYTE "Please enter a file path, or type ""*"" to exit to menu: ",0
-
-
-filename	BYTE "C:\Users\macle\Desktop\TEST.txt"
-
-;========Error messages========;
-error_file_notfound					BYTE "File name not found",0
-error_file_nodenameinvalid			BYTE "Invalid node name invalid",0
-error_file_dualconnection			BYTE "Invalid format. Node cannot connect to itself",0
-error_file_maxnodesdefined			BYTE "Too many nodes declared",0
 .code
 
-
-;===========Procedure Descriptions===========;
-;SkipSpaces:
-;	Description:		Skips whitespace characters in bufferindex from bufferindex onwards. 
-;	Preconditions:		None
-;	Postconditions:		bufferindex directs towards non-whitespace character. If character is null-terminator, sets carry
-
-
-
 main PROC
-	CALL	InitializeNodes
 
-	Engine:
-		CALL	TransmitMessages
-		CALL	UpdateTime
-		CALL	RecieveMessages
+	MOV		edx,OFFSET Menu1
+	CALL	WriteString
+	CALL	Crlf
+	MOV		edx,OFFSET Menu2
+	CALL	WriteString
+	CALL	Crlf
+	MOV		edx,OFFSET Menu3
+	CALL	WriteString
+	CALL	Crlf
+	MOV		edx,OFFSET Menu4
+	CALL	WriteString
+	CALL	Crlf
+	MOV		edx,OFFSET Menu5
+	CALL	WriteString
+	CALL	Crlf
+	MOV		edx,OFFSET Menu6
+	CALL	WriteString
+	CALL	Crlf
+	MOV		edx,OFFSET Menu7
+	CALL	WriteString
+	CALL	Crlf
 
-		CMP		quitflag,0						;check quit flag
-		JE		Engine
+	engineloop:
+		CALL	Crlf
+		MOV		edx,OFFSET InputPrompt
+		CALL	WriteString
+
+		MOV		edx, OFFSET inputstring
+		MOV		ecx, inputmax
+		CALL	ReadString
+
+		CALL	processString
+		CMP		quitflag,0
+		JE		engineloop
 
 	exit
 main ENDP
 
-ToUpper PROC
-	CMP		al,"a"
-	JL		Done
-	CMP		al,"z"
-	JG		Done
-	AND		al,UpperMask
 
-	Done:
-		ret
-ToUpper ENDP
 
-IsAlphaChar PROC
-	CMP		al,"0"
-	JL		notalphanumeric
-	CMP		al,"Z"
-	JG		notalphanumeric
-	STC
-	JMP		Done
-
-	notalphanumeric:
-		CLC
-
-	Done:
-		ret
-IsAlphaChar ENDP
-
-IsSpaceChar PROC
-	CMP		al,spacechar
-	JE		IsSpace
-	CMP		al,tabchar
-	JE		IsSpace
-	CMP		al,CRchar
-	JE		IsSpace
-	CMP		al,LFchar
-	JE		IsSpace
-
-	CLC
-	JMP		Done
-
-	IsSpace:
-		STC
-		JMP		Done
-
-	Done:
-		ret
-IsSpaceChar ENDP
-
-SkipSpaces PROC
-	PUSH	eax
-	PUSH	ebx
-
-	XOR		ebx,ebx
-	MOV		bl,bufferindex
-
-	CheckSpace:
-		MOV		al,BYTE PTR [inputbuffer+ebx]
-
-		CMP		al,0
-		JE		EndOfBuffer
-
-		CALL	IsSpaceChar
-		JNC		CharFound
-
-		INC		bl
-		JMP		CheckSpace
-
-	EndOfBuffer:
-		STC
-		JMP		Done
-	CharFound:
-		CLC
-		JMP		Done
-	Done:
-		MOV		bufferindex,bl
-		POP		ebx
-		POP		eax
-		ret
-SkipSpaces ENDP
-
-ClearInputBuffer PROC
+pushit PROC	;pushes whatever is in edx to the stack
 	PUSH	ecx
-	MOV		edi,0
-	MOV		edx,OFFSET inputbuffer
+	XOR		ecx, ecx						;Clear ecx
 
-	next:
-		MOV		BYTE PTR [edx+edi],0
-		INC		edi
-		CMP		edi,inputmax
-		JLE		next
+	ADD		sindex, 4						;add 2 bytes to the index
+	MOV		cl, sindex						;move index into lower portion of exc
+	MOV		sdword PTR[mystack+ecx], edx		;move dx into the new slot
 
 	POP		ecx
 	ret
-ClearInputBuffer ENDP
+pushit ENDP
 
-
-
-DeclareNodeA PROC
-	PUSHA
-
-	MOV		edx,SIZEOF NodeNames
-	XOR		edi,edi
-
-	node_checkdeclared:
-		CMP		BYTE PTR [edi+NodeNames],al
-		JE		node_declared
-		CMP		BYTE PTR [edi+edx],0
-		JE		node_undeclared
-
-		ADD		edi,MaxNodeCNX						;edi is the counter for NodeNames records. Each record holds the node's name, and all connected node names. 
-		
-		MOV		cl,SIZEOF NodeNames
-		CMP		edi,ebx
-		JGE		Fail_CapHit
-		JMP		node_checkdeclared
-
-	node_undeclared:
-		MOV		BYTE PTR [edi+edx],al
-		JMP		Success
-	node_declared:
-		JMP		Success
-
+popit PROC	;pops whatever is the top of this stack. No prerequisites.
+	PUSH	ecx
+	XOR		ecx, ecx						;Clear ecx
 	
-	Fail_CapHit:
-		STC
-		JMP		Done
-	Success:
-		CLC
-		JMP		Done
-	Done:
-		POPA
-		ret
-DeclareNodeA ENDP
+	MOV		cl, sindex						;move index into lower portion of exc
+	MOV		sdword PTR[mystack+ecx], 0		;move dx into the new slot
+	SUB		sindex, 4						;add 2 bytes to the index
+
+	POP		ecx
+	ret
+popit ENDP
 
 
-DeclareNodePair PROC				;al and bl each hold a character that represents a node's name. "Declare" meaning they want a node of name X. This does NOT mean space is allocated for the node.
-									;DeclareNodePair sorts given node pairs into NodeNames.
-	PUSH	edi
-	PUSH	ebx
-	PUSH	edx
 
-	MOV		cl,al					;cl holds node a as temp
+getnumber PROC
+	MOV		numholder,0		;We are starting a new number set, so start with 0.
+	XOR		edx,edx			;clear edx in case of overload. We don't care about edx up to this point.
+	CMP		sindex,28		;max bytes the array can hold
+	JGE		stackfull
 
-	CALL	DeclareNodeA
-	JC		Fail_CapHit
+	JMP		numdetectloop
 
-	Success:
-		CLC
-		JMP		Done
-	Fail_CapHit:
-		MOV		edx,OFFSET error_file_maxnodesdefined
+	stackfull:
+		MOV		edx,OFFSET error_stackfull
 		CALL	WriteString
-		CALL	Crlf
-		STC
-		JMP		Done
-	Done:
-		POP		edx
-		PUSH	ebx
-		POP		edi
 		ret
-DeclareNodePair ENDP
 
-GetNodesFromFile PROC
-	prompt:
-		MOV		edx,OFFSET prompt_filepath
+	numoutofrange:
+		MOV		edx,OFFSET error_outofrange
 		CALL	WriteString
-		MOV		edx,OFFSET inputbuffer
-		MOV		ecx,inputmax
-		CALL	ReadString
+		ret
 
-		MOV		al,BYTE PTR [inputbuffer]
-		CMP		al,quitchar
-		JE		checkemptybuffer
-		JNE		processfile
+	negate:
+		NEG		edx
+		JMP		finalnum
 
-	checkemptybuffer:
-		MOV		bufferindex,1
-		CALL	SkipSpaces
-		MOV		bufferindex,0
-		JC		BackToMenu
-		JNC		processfile
+	numdetectloop:				;post-test loop.
+		CALL	charisnumber
+		CMP		dl,1
+		JNE		endnumdetect	;char is non-numeric, end loop
 
-	processfile:
-		CALL	OpenInputFile
-		MOV		fileHandle,eax
-
-		CALL	ClearInputBuffer
-
-		MOV		edx,OFFSET inputbuffer
-		MOV		ecx,inputmax
-		CALL	ReadFromFile
-		JC		filenotfound
-		JNC		parsefile
-
-	parsefile:
-		MOV		cl,0
-		MOV		bufferindex,0
-
-		getnextpair:
-			CALL	SkipSpaces
-			JC		endoffile
-
-			MOV		edx,OFFSET inputbuffer
-			MOVSX	ecx,bufferindex
-			ADD		edx,ecx
-			getfirstnode:
-				MOV		al,BYTE PTR [edx]
-				CALL	ToUpper
-				MOV		bl,al								;cl stores first node letter.
-				CALL	IsAlphaChar
-				JNC		nodenameinvalid
-
-			getsecondnode:
-				INC		edx
-
-				MOV		al,BYTE PTR [edx]
-				CALL	ToUpper
-				CMP		al,bl
-				JE		nodeletterssame
-				CALL	IsAlphaChar
-				JNC		nodenameinvalid
-
-				ADD		bufferindex,2						;buffer now points to the character after the pair of nodes
-
-				CALL	DeclareNodePair
-				JC		BackToMenu
-
-				JMP		getnextpair
-
-		endoffile:
+		SUB		bl,48			;bl now holds the number conversion of the character
 			
-			;look through NodeNames, make sure every node in the network is used
+			PUSH	eax			;save eax (#chars) as it will be overwritten
 
-			JMP		Loadsuccessful
-	nodenameinvalid:
-		MOV		edx,OFFSET error_file_nodenameinvalid
-		CALL	WriteString
-		JMP		BackToMenu
-	nodeletterssame:
-		MOV		edx,OFFSET error_file_dualconnection
-		CALL	WriteString
-		JMP		BackToMenu
-	filenotfound:
-		MOV		edx,OFFSET error_file_notfound
-		CALL	WriteString
-		CALL	Crlf
-		JMP		prompt
+		MOV		eax,numholder
+		MUL		decten			;multiply eax by 10
+		ADD		eax,ebx			;add new number to ecx
+		MOV		numholder,eax
+
+			POP		eax				;restore eax
+			
+		MOV		bl, BYTE PTR inputstring[edi]
+		INC		edi									;increment edi
+
+		CMP		edi, eax			;compare iterator and max characters
+		JG		endnumdetect		;if iterator is greater than # characters, end loop
+		JMP		numdetectloop
+
+	endnumdetect:	;check numnegative to negate
+		MOV			edx,numholder
+
+		CMP			negflag,1		;if negative flag, negate
+		JE			negate
 		
-	BackToMenu:
-		CALL	Crlf
-		CALL	Crlf
-		STC
-		JMP		Done
-	Loadsuccessful:
-		MOV		eax,fileHandle
-		CALL	CloseFile
-		CLC
-		JMP		Done
-	Done:
+		finalnum:
+			CMP			numholder,-32768		;Check the new number to see if it's valid. If not, end. 
+			JL			numoutofrange
+			CMP			numholder,32767
+			JG			numoutofrange
+
+			CALL		pushit
+	ret
+getnumber ENDP
+
+charisnumber PROC	;bl holds the character. afterwards, edx holds 1 if numeric, 0 if non-numeric
+	XOR		edx,edx
+	MOV		dl,1
+
+	JMP check
+
+	isnotnum:
+		MOV		dl,0
 		ret
-GetNodesFromFile ENDP
 
-GetNodesFromKeyboard PROC
-	
-	Done:
+	check:
+		CMP		bl,"0"
+		JL		isnotnum
+		CMP		bl,"9"
+		JG		isnotnum
 		ret
-GetNodesFromKeyboard ENDP
+charisnumber ENDP
 
-InitializeNodes PROC
-	promptloadtype:
-		MOV		edx,OFFSET prompt_loadnodemenu1
+crunchbegin PROC			;puts the top of the stack into ebx, second into eax. a-d registers will be destroyed.
+	XOR		eax,eax
+	XOR		ebx,ebx			
+	XOR		ecx,ecx
+	XOR		edx,edx
+
+	sufficientelements:
+		MOV		cl,sindex						;ecx holds sindex
+		MOV		ebx,sdword PTR[mystack+ecx]		;ebx holds top
+		MOV		sdword PTR[mystack+ecx],0		;clear out the top of the array
+		SUB		cl,4							;shift down the index by one
+		MOV		eax,sdword PTR[mystack+ecx]		;ebx holds second-to-top
+		ret
+crunchbegin ENDP
+
+crunchend PROC				;puts eax into top of stack
+	JC		carryerror
+	MOV		sdword PTR[mystack+ecx],eax		;store the resultant into the new top
+	MOV		sindex,cl						;save the new index properly
+	ret
+
+	carryerror:
+		MOV		edx,OFFSET error_overflow
 		CALL	WriteString
 		CALL	Crlf
-		MOV		edx,OFFSET prompt_loadnodemenu2
+		ADD		cl,4
+		MOV		sdword PTR[mystack+ecx],ebx
+		ret
+crunchend ENDP
+
+processString PROC
+	PUSH	edi
+	MOV		quitflag,0							;Carry flag as a 0 means we keep asking for input. "q" input sets the flag to stop the loop
+	XOR		ebx, ebx			;we will be using ebx, so clear it out (no save)
+	MOV		edi,0				;edi is the loop iterator, starts at 0
+	MOV		negflag,0
+
+	JMP		continuecharloop		;Start the loop to go through each character
+
+	;############			OUTPUT/ERRORS
+	displaytop:
+		MOV		edx,OFFSET stackdisplaymsg
+		CALL	WriteString
+
+		MOV		cl, sindex						;move index into lower portion of exc
+		MOV		eax,sdword PTR[mystack+ecx]		;move dx into the new slot
+		CWD
+
+		CALL	WriteInt
+		JMP		leavecharloop
+	displaycleared:
+		MOV		edx,OFFSET stackclearedmsg
 		CALL	WriteString
 		CALL	Crlf
-		MOV		edx,OFFSET prompt_loadnodemenu3
+		JMP		charloopdone
+	insufficientelementserror:
+		MOV		edx,OFFSET error_insufficientelements
 		CALL	WriteString
 		CALL	Crlf
-		MOV		edx,OFFSET prompt_loadnodemenu4
+		JMP		charloopdone
+	nonnumbererror:
+		MOV		edx,OFFSET error_invalidinput
 		CALL	WriteString
-
-		MOV		edx,OFFSET inputbuffer
-		MOV		ecx,inputmax
-		CALL	ReadString
-
-		CMP		BYTE PTR [edx],"1"
-		JE		selection1
-		CMP		BYTE PTR [edx],"2"
-		JE		selection2
-		CMP		BYTE PTR [edx],"3"
-		JE		selection3
-		JMP		promptloadtype
-
-	selection1:
-		CALL	GetNodesFromFile
-		JC		promptloadtype
-		JMP		finalize
-
-	selection2:
-		JMP		finalize
-
-	selection3:
-		JMP		finalize
+		CALL	Crlf
+		JMP		charloopdone
 
 
-	finalize:
+
+	closeout:
+		MOV		quitflag,1
+		JMP		charloopdone
+	doexchange:
+		CMP		sindex,4
+		JL		insufficientelementserror
+
+		XOR		ecx,ecx
+
+		MOV		cl,sindex
+		MOV		sdword PTR[mystack+ecx],eax
+		SUB		cl,4
+		MOV		sdword PTR[mystack+ecx],ebx
+
+		JMP		charloopdone
+	donegate:
+		MOV		cl,sindex
+		MOV		ebx,sdword PTR[mystack+ecx]		;ebx holds top
+		NEG		ebx
+		MOV		sdword PTR[mystack+ecx],ebx
+		JMP		charloopdone
+	dorollup:									;Move all elements up starting from the top. move top element to 0th index.
+		XOR		ecx,ecx
+		MOV		cl,sindex							;ecx is the current index
+
+		rolluploop:
+			CMP		cl,-4
+			JLE		rolluploopdone
+
+			MOV		ebx,sdword PTR[mystack+ecx]
+			ADD		cl,4
+			MOV		sdword PTR[mystack+ecx],ebx
+
+			SUB		cl,8
+			JMP		rolluploop
+
+		rolluploopdone:
+			MOV		cl,sindex
+			ADD		cl,4
+			MOV		ebx,sdword PTR[mystack+ecx]
+			MOV		sdword PTR[mystack+ecx],0
+			MOV		sdword PTR[mystack],ebx
+
+			JMP		charloopdone
+	dorolldown:									;Move lowest element to the top, roll all down
+		XOR		ecx,ecx
+		MOV		cl,sindex							;ecx is the current index
+		ADD		cl,4								;ecx is the nth+1 index
+
+		MOV		ebx,sdword PTR[mystack]
+		MOV		sdword PTR[mystack+ecx],ebx			;put the first element into the nth+1 index
+
+		MOV		cl,0
+
+		rolldownloop:
+			CMP		cl,sindex
+			JG		rolldownloopdone
+
+			ADD		cl,4
+			MOV		ebx,sdword PTR[mystack+ecx]
+			SUB		cl,4
+			MOV		sdword PTR[mystack+ecx],ebx
+
+			ADD		cl,4
+			JMP		rolldownloop
+
+		rolldownloopdone:
+			MOV		cl,sindex
+			ADD		cl,4
+			MOV		sdword PTR[mystack+ecx],0
+
+			JMP		charloopdone
+
+
+		JMP		charloopdone
+	doviewstack:
+		MOV		ecx,0
+
+		viewforloop:
+			CMP		cl,sindex
+			JG		charloopdone
+
+			MOV		eax,sdword PTR[mystack+ecx]		;move dx into the new slot
+			CWD
+			CALL	WriteInt
+			CALL	Crlf
+
+			ADD		ecx,4
+			JMP		viewforloop
+	doclearstack:
+		MOV		ecx,0
+
+		clearforloop:
+			CMP		cl,sindex
+			JG		endclearforloop
+			MOV		sdword PTR[mystack+ecx],0
+			ADD		ecx,4
+			JMP		clearforloop
+			
+		endclearforloop:
+			MOV		sindex,-4
+			JMP		displaycleared
+			JMP		charloopdone
+	doadd:
+		CMP		sindex,4			;check for minimum of elements (2)
+		JL		insufficientelementserror
+
+		CALL	crunchbegin
+		ADD		eax,ebx							;Add top to second-to-top
+		CALL	crunchend
+
+		JMP		charloopdone
+	domult:
+		CMP		sindex,4			;check for minimum of elements (2)
+		JL		insufficientelementserror
+
+		CALL	crunchbegin
+		MUL		ebx						;multiply ebx into eax, store into eax
+		CALL	crunchend
+
+		JMP		charloopdone
+	dodiv:
+		CMP		sindex,4			;check for minimum of elements (2)
+		JL		insufficientelementserror
+
+		CALL	crunchbegin
+		DIV		ebx						;divide eax by ebx, store into eax
+		CALL	crunchend
+
+		JMP		charloopdone
+	dosub:
+		CMP		sindex,4			;check for minimum of elements (2)
+		JL		insufficientelementserror
+
+		CALL	crunchbegin
+		SUB		eax,ebx							;Subtract top from second
+		clc
+		CALL	crunchend
+
+		JMP		charloopdone
+	checksign:
+		PUSH	ebx
+
+		MOV		bl, BYTE PTR inputstring[edi]
 		
-	ret
-InitializeNodes ENDP
+		CALL	charisnumber
+		CMP		dl,1			;check if char after minus is a number
+		JE		numbersfollow	;if is a number...
+		JMP		loneneg			;else...
+
+		numbersfollow:
+			MOV		negflag,1
+			POP		ebx
+			JMP		continuecharloop
+		loneneg:
+
+			POP		ebx
+			JMP		dosub
+			JMP		charloopdone
+	dopushnumber:			;Do not destroy eax. Continue off of edi.
+		CALL	getnumber
+		JMP		charloopdone
 
 
-UpdateTime PROC
-	ret
-UpdateTime ENDP
-
-TransmitMessages PROC
-	ret
-TransmitMessages ENDP
-
-RecieveMessages PROC
-	ret
-RecieveMessages ENDP
 
 
 
-END main
+	continuecharloop:
+		CMP		edi, eax			;compare iterator and max characters
+		JGE		charloopdone		;if iterator is greater/equal to # characters, end loop
+
+		MOV		bl, BYTE PTR inputstring[edi]			;bl holds the edi'th character of the inputstring.
+		INC		edi										;increment edi
+		OR		bl, 20h									;make the character lower, so we only need to check for lowercase input
+
+		CMP		bl,Spacechar		;SPACE CHAR
+		JE		continuecharloop
+		CMP		bl,Tabchar			;TAB CHAR
+		JE		continuecharloop
+		CMP		bl,"q"			;QUIT
+		JE		closeout
+		CMP		bl,"x"			;EXCHANGE
+		JE		doexchange
+		CMP		bl,"n"			;NEGATE
+		JE		donegate
+		CMP		bl,"u"			;ROLL UP
+		JE		dorollup
+		CMP		bl,"d"			;ROLL DOWN
+		JE		dorolldown
+		CMP		bl,"v"			;VIEW
+		JE		doviewstack
+		CMP		bl,"c"			;CLEAR
+		JE		doclearstack
+		CMP		bl,"+"			;ADD
+		JE		doadd
+		CMP		bl,"*"			;MULTIPLY
+		JE		domult
+		CMP		bl,"/"			;DIVIDE
+		JE		dodiv
+		CMP		bl,"-"			;MINUS SIGN
+		JE		checksign
+
+		CALL	charisnumber
+		CMP		dl,1
+		JE		dopushnumber	;POSSIBLE NUMBER
+
+		JMP		nonnumbererror	;NON NUMBER
+
+
+	charloopdone:
+		CMP		sindex,0
+		JGE		displaytop
+
+		leavecharloop:
+			MOV		edi,0		;clean up edi
+			POP		edi
+			ret
+
+processString ENDP
+
+
+
+END main ; name of start up procedure
+
+
+
