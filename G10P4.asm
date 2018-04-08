@@ -1,4 +1,4 @@
-title Multitasking Operating System Simulator
+title Network Simulator
 ; Program 3
 ; Group 10
 ; Paul MacLean, Mark Blatnik, Tyler Harclerode
