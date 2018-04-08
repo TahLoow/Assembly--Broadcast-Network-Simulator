@@ -1,5 +1,5 @@
 title Network Simulator
-; Program 3
+; Program 4
 ; Group 10
 ; Paul MacLean, Mark Blatnik, Tyler Harclerode
 ; March 1, 2018
@@ -18,32 +18,39 @@ fileHandle	DWORD 0
 
 ;========Node Values========;
 n_constantbytes	EQU 14
-n_name		EQU 0
-n_numcnx	EQU 1
-n_queueptr	EQU 2
-n_queueinp	EQU 6
-n_queueout	EQU 10
+n_name			EQU 0
+n_numcnx		EQU 1
+n_queueptr		EQU 2
+n_queuefront	EQU 6
+n_queueback		EQU 10
 
 c_cnx_loc	EQU 0
 c_cnx_rcv	EQU 4
 c_cnx_xmt	EQU 8
 
-
 ;========Node Data========;
 NumNodes			BYTE 0
-MaxNodes			EQU 8
+MaxNodes			EQU 6
 MaxNodeCNX			EQU 4										;Max Connections per node
-NodeConstantAlloc	EQU 14
+NodeStaticAlloc		EQU 14
 
-NodeNames			BYTE MaxNodes * MaxNodeCNX dup(0)			;List of all node names, plus MaxNodeCNX bytes for each node to store the connection names from given node.
-NodeBuffer			DWORD MaxNodes								;List of node pointers
-NodeHeap			BYTE MaxNodes * (n_constantbytes + MaxNodeCNX * NodeConstantAlloc) dup(0)
+packetsize			EQU 8
 
+;========Buffers & Heaps========;
+NodeNames			BYTE MaxNodes * MaxNodeCNX dup(0)			;List of all node **names**, plus MaxNodeCNX bytes for each node to store the connections.
 
-;========Buffer Values========;
-inputmax	EQU 100
-inputbuffer	BYTE inputmax+1 dup(0)
-bufferindex	DWORD 0
+NodeBuffer			DWORD MaxNodes								;List of pointers that point to beginning of each existing node in NodeHeap. For easier indexing through nodes
+NodeBufferIndex		BYTE 0										;Index for NodeBuffer. ADD FOUR TO INCREMENT TO NEXT NODE. 
+
+NodeHeap			BYTE MaxNodes * (n_constantbytes + MaxNodeCNX * NodeStaticAlloc) dup(0)			;Byte allocation for maximum nodes & relevant data
+NodePointer			DWORD 0										;Points to the beginning of a node in the NodeHeap. May or may not be necessary.
+
+maxqueuesize		EQU 80										;Max # of packets a node can hold at any given time.
+QueueHeap			BYTE packetsize*maxqueuesize*MaxNodes dup(0)		;Byte allocation for max queues. Each node gets one queue, and points to one queue.
+
+inputmax			EQU 100	
+inputbuffer			BYTE inputmax+1 dup(0)							;Keyboard input buffer
+inpbufferindex		DWORD 0											;Used to keep track of inputbuffer positions
 
 ;========Random Values========;
 spacechar		BYTE 20h,0					;Space character
@@ -180,9 +187,9 @@ GetNodesFromFile PROC
 		JNE		processfile
 
 	checkemptybuffer:
-		MOV		bufferindex,1
+		MOV		inpbufferindex,1
 		CALL	SkipSpaces
-		MOV		bufferindex,0
+		MOV		inpbufferindex,0
 		JC		BackToMenu
 		JNC		processfile
 
@@ -205,7 +212,7 @@ GetNodesFromFile PROC
 			XOR		ebx,ebx
 			XOR		ecx,ecx
 
-			MOV		bufferindex,edi							;edi is the counter, but we load the counter into bufferinedex before checking next pairs
+			MOV		inpbufferindex,edi							;edi is the counter, but we load the counter into bufferinedex before checking next pairs
 
 			CALL	SkipSpaces
 			JC		endoffile
@@ -341,7 +348,7 @@ SkipSpaces PROC								;skips spaces in inputbuffer
 	PUSH	ebx
 
 	XOR		ebx,ebx
-	MOV		ebx,bufferindex
+	MOV		ebx,inpbufferindex
 
 	CheckSpace:
 		MOV		al,BYTE PTR [inputbuffer+ebx]
@@ -362,7 +369,7 @@ SkipSpaces PROC								;skips spaces in inputbuffer
 		CLC
 		JMP		Done
 	Done:
-		MOV		bufferindex,ebx
+		MOV		inpbufferindex,ebx
 		POP		ebx
 		POP		eax
 		ret
