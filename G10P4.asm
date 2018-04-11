@@ -70,7 +70,8 @@ prompt_loadnodemenu2			BYTE "	2: Load from keyboard",0
 prompt_loadnodemenu3			BYTE "	3: Load from default",0
 prompt_loadnodemenu4			BYTE "Please make a selection (1-3): ",0
 prompt_filepath					BYTE "Please enter a file path, or type ""*"" to exit to menu: ",0
-
+prompt_outgoingqueue
+prompt_receiverbuffer
 
 filename	BYTE "C:\Users\macle\Desktop\TEST.txt"
 
