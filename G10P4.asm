@@ -41,7 +41,7 @@ packetsize			EQU 8
 NodeNames			BYTE MaxNodes * (1 + MaxNodeCNX) dup(0)			;List of all node **names**, plus MaxNodeCNX bytes for each node to store the connections.
 
 NodeBuffer			DWORD MaxNodes dup(0)						;List of pointers that point to beginning of each existing node in NodeHeap. For easier indexing through nodes
-NodeBufferIndex		BYTE 0										;Index for NodeBuffer. ADD FOUR TO INCREMENT TO NEXT NODE. 
+NodeIndex			BYTE 0										;Index for NodeBuffer. ADD FOUR TO INCREMENT TO NEXT NODE. 
 
 NodeHeap			BYTE MaxNodes * (n_fixedoffset + MaxNodeCNX * c_cnx_offset) dup("h")			;Byte allocation for maximum nodes & relevant data
 NodePointer			DWORD 0										;Points to the beginning of a node in the NodeHeap.
@@ -70,9 +70,16 @@ prompt_loadnodemenu2			BYTE "	2: Load from keyboard",0
 prompt_loadnodemenu3			BYTE "	3: Load from default",0
 prompt_loadnodemenu4			BYTE "Please make a selection (1-3): ",0
 prompt_filepath					BYTE "Please enter a file path, or type ""*"" to exit to menu: ",0
-prompt_outgoingqueue
-prompt_receiverbuffer
 
+out_time			BYTE "Time is ",0
+out_outgoing		BYTE "Processing outgoing queue of",0
+out_attime			BYTE "At time ",0	
+out_messagefrom		BYTE "a message came from ",0
+out_thereare		BYTE "There are ",0
+out_newmessages		BYTE "new messages ",0
+out_messagegenerated	BYTE "a message is generated ",0
+
+ 
 filename	BYTE "C:\Users\macle\Desktop\TEST.txt"
 
 ;========Error messages========;
@@ -107,6 +114,331 @@ main PROC
 	exit
 main ENDP
 
+
+
+
+
+GetCurrentNode PROC
+	PUSH	eax
+
+	MOV		eax,dwordsize				;move dwordsize(4) into eax
+	MUL		NodeIndex					;multiply NodeIndex into eax, eax is now the offset from NodeBuffer
+	ADD		eax,OFFSET NodeBuffer		;
+	MOV		eax,DWORD PTR [eax]			;
+	MOV		NodePointer,eax
+
+	POP		eax
+	ret
+GetCurrentNode ENDP
+
+GetNextNode PROC
+	PUSH	eax
+
+	INC		NodeIndex
+	MOV		al,NumNodes
+	CMP		NodeIndex,al
+	JGE		Wrap
+
+	NoWrap:
+		CALL	GetCurrentNode
+		CLC
+		JMP		Done
+
+	Wrap:
+		MOV		NodeIndex,0
+		CALL	GetCurrentNode
+		STC
+		JMP		Done
+
+	Done:
+		POP		eax
+		ret
+GetNextNode ENDP
+
+GetNodeOfName PROC										;al holds comparison name. Index through addresses in NodeBuffer
+	PUSH	edi
+	PUSH	ebx
+	PUSH	edx
+
+	checknode:
+		CALL	GetNextNode
+		JC		NotFound
+
+		MOV		ebx,NodePointer
+		MOV		bl,BYTE PTR [ebx+n_name]
+		CMP		al,bl
+		JE		Found
+
+		JMP		checknode
+
+	Found:
+		CLC
+		JMP		Done
+
+	NotFound:
+		STC
+		JMP		Done
+
+	Done:
+		POP		edx
+		POP		ebx
+		POP		edi
+		ret
+GetNodeOfName ENDP
+
+
+
+
+
+
+
+
+GetNodesFromFile PROC
+	prompt:
+		MOV		edx,OFFSET prompt_filepath
+		CALL	WriteString
+		MOV		edx,OFFSET inputbuffer
+		MOV		ecx,inputmax
+		CALL	ReadString
+
+		MOV		al,BYTE PTR [inputbuffer]
+		CMP		al,quitchar
+		JE		checkemptybuffer
+		JNE		processfile
+
+	checkemptybuffer:
+		MOV		inpbufferindex,1
+		CALL	SkipSpaces
+		MOV		inpbufferindex,0
+		JC		BackToMenu
+		JNC		processfile
+
+	processfile:
+		CALL	OpenInputFile								;eax holds file handle
+
+		MOV		edx,OFFSET inputbuffer						;Buffer will be empty by this point
+		MOV		ecx,inputmax
+		CALL	ClearBuffer
+		CALL	ReadFromFile								;Load from file into buffer
+		JC		filenotfound
+		JNC		parsefile
+
+	parsefile:
+		CALL	CloseFile									;eax holds open file handle; data already read, so close it
+		MOV		edx,OFFSET NodeNames
+
+		XOR		edi,edi										;Empty buffer counter
+
+		getnextpair:
+			XOR		eax,eax
+			XOR		ebx,ebx
+			XOR		ecx,ecx
+
+			MOV		inpbufferindex,edi							;edi is the counter, but we load the counter into bufferinedex before checking next pairs
+
+			CALL	SkipSpaces
+			JC		endoffile
+
+			MOV		edi,inpbufferindex
+
+			MOV		edx,OFFSET inputbuffer
+			getfirstnode:
+				MOV		al,BYTE PTR [edx+edi]
+				CALL	ToUpper
+				MOV		bl,al								;bl stores first node letter.
+				CALL	IsAlphaChar
+				JNC		nodenameinvalid
+
+			getsecondnode: 
+				INC		edi
+
+				MOV		al,BYTE PTR [edx+edi]
+				CALL	ToUpper
+				CMP		al,bl
+				JE		nodeletterssame
+				CALL	IsAlphaChar
+				JNC		nodenameinvalid
+
+				INC		edi									;bufferindex now points to the character after the pair of nodes
+
+				CALL	SwapAlBl
+				MOV		cl,bl
+				CALL	DeclareNodePair
+				JC		BackToMenu
+
+				JMP		getnextpair
+
+		endoffile:
+			MOV		edx,OFFSET NodeNames
+			MOV		edx,OFFSET inputbuffer					;clear input buffer
+			MOV		ecx,inputmax
+			CALL	ClearBuffer
+
+
+			;check if network has sub-networks. if so, error.*********************************************************************************
+
+
+			;Get number of connections
+			XOR		ecx,ecx									;ecx holds number of connections
+			XOR		edi,edi									;edi is the record offset from NodeNames
+			XOR		esi,esi									;esi is the index from within a record
+			MOV		edx,OFFSET NodeNames
+
+			getrecordCNX:
+				CMP		edi,MaxNodes
+				JG		WireNodes
+				CMP		BYTE PTR[edx],NULL
+				JE		WireNodes
+				
+				MOV		bl,BYTE PTR[edx]
+
+				MOV		esi,1								;esi steps to each connection from within the record, starting at 1
+				XOR		ecx,ecx								;start node's #CNX at 0
+				getnumconnections:
+					CMP		esi,MaxNodeCNX
+					JG		createthisnode
+					MOV		al,BYTE PTR [edx+esi]
+					CMP		BYTE PTR [edx+esi],NULL
+					JE		createthisnode
+					INC		ecx
+					INC		esi
+					JMP		getnumconnections
+
+			steprecord:
+				ADD		edx,MaxNodeCNX+1
+				INC		edi
+				JMP		getrecordCNX
+
+			createthisnode:
+				CALL	CreateNode
+				JMP		steprecord
+
+
+			WireNodes:
+				WireNode:
+					MOV		NodeIndex,-1							;After all nodes have been created, set the NodeIndex to the beginning
+					CALL	GetNextNode
+					JC		NodesWired
+
+					MOV		edx,DWORD PTR[NodePointer]
+					MOV		al,BYTE PTR[edx+n_name]
+
+
+			NodesWired:
+
+			NodeNotFound:
+				
+				
+
+				;MOV		
+
+				;loop through each node address in NodeBuffer. make the connections
+
+
+			JMP		Loadsuccessful
+	nodenameinvalid:
+		MOV		edx,OFFSET error_file_nodenameinvalid
+		CALL	WriteString
+		JMP		BackToMenu
+	nodeletterssame:
+		MOV		edx,OFFSET error_file_dualconnection
+		CALL	WriteString
+		JMP		BackToMenu
+	filenotfound:
+		MOV		edx,OFFSET error_file_notfound
+		CALL	WriteString
+		CALL	Crlf
+		JMP		prompt
+		
+	BackToMenu:
+		CALL	Crlf
+		CALL	Crlf
+		STC
+		JMP		Done
+	Loadsuccessful:
+		CLC
+		JMP		Done
+	Done:
+		ret
+GetNodesFromFile ENDP
+
+GetNodesFromKeyboard PROC
+	
+	Done:
+		ret
+GetNodesFromKeyboard ENDP
+
+InitializeNodes PROC
+	MOV		eax,OFFSET NodeHeap
+	MOV		NodePointer,OFFSET NodeHeap						;NodePointer points to beginning of the NodeHeap
+
+	promptloadtype:
+		MOV		edx,OFFSET prompt_loadnodemenu1
+		CALL	WriteString
+		CALL	Crlf
+		MOV		edx,OFFSET prompt_loadnodemenu2
+		CALL	WriteString
+		CALL	Crlf
+		MOV		edx,OFFSET prompt_loadnodemenu3
+		CALL	WriteString
+		CALL	Crlf
+		MOV		edx,OFFSET prompt_loadnodemenu4
+		CALL	WriteString
+
+		MOV		edx,OFFSET inputbuffer
+		MOV		ecx,inputmax
+		CALL	ReadString
+
+		CMP		BYTE PTR [edx],"1"
+		JE		selection1
+		CMP		BYTE PTR [edx],"2"
+		JE		selection2
+		CMP		BYTE PTR [edx],"3"
+		JE		selection3
+		JMP		promptloadtype
+
+	selection1:
+		CALL	GetNodesFromFile
+		JC		promptloadtype
+		JMP		finalize
+
+	selection2:
+		JMP		finalize
+
+	selection3:
+		JMP		finalize
+
+
+	finalize:
+		ret
+InitializeNodes ENDP
+
+
+UpdateTime PROC
+	ret
+UpdateTime ENDP
+
+TransmitMessages PROC
+	ret
+TransmitMessages ENDP
+
+RecieveMessages PROC
+	ret
+RecieveMessages ENDP
+
+
+
+
+SwapAlBl PROC
+	PUSH	ecx
+
+	MOV		cl,bl					;cl holds NodeB as temp
+	MOV		bl,al
+	MOV		al,cl					;switch al and  bl. al now holds NodeA name, bl now holds NodeB name
+
+	POP	ecx
+	ret
+SwapAlBl ENDP
 
 DeclareNode PROC										;returns edx holding record of a given node
 	PUSH	eax
@@ -163,10 +495,6 @@ DeclareNodePair PROC				;al and bl each hold a character that represents a node'
 	PUSH	edi
 	PUSH	ebx
 	PUSH	edx
-
-	MOV		cl,bl					;cl holds NodeB as temp
-	MOV		bl,al
-	MOV		al,cl					;switch al and  bl. al now holds NodeA name, bl now holds NodeB name
 
 	CALL	DeclareNode				;declare node name in al (NodeA)
 	JC		Fail_CapHit
@@ -264,18 +592,19 @@ CreateNode PROC
 	MOV		DWORD PTR [edi + n_queueback], eax
 	 
 	;#### Store NodePointer in NodeBuffer for easy access ####
-	MOVSX	eax,NodeBufferIndex
+	MOV		eax,dwordsize
+	MUL		NodeIndex							;eax now holds NodeIndex * 4, which is the record offset to the next address in NodeBuffer
 	ADD		eax,OFFSET NodeBuffer
 	MOV		DWORD PTR[eax], edi
-	ADD		NodeBufferIndex,dwordsize
+	INC		NodeIndex
 
-	INC  NumNodes						;Update number of nodes created
+	INC  NumNodes								;Update number of nodes created
 
 	;#### Update NodePointer for next Node ####
-	MOV		eax, c_cnx_offset				;12 bytes per connection
-	MUL		ecx							;Multiply by number of connections for total variable offset from currently created node
-	ADD		eax, n_fixedoffset				;Add constant 14 bytes from beginning of node
-	ADD		NodePointer,eax				;NodePointer now ready for next node
+	MOV		eax, c_cnx_offset					;12 bytes per connection
+	MUL		ecx									;Multiply by number of connections for total variable offset from currently created node
+	ADD		eax, n_fixedoffset					;Add constant 14 bytes from beginning of node
+	ADD		NodePointer,eax						;NodePointer now ready for next node
 
 	JMP  Success
 
@@ -291,221 +620,8 @@ CreateNode PROC
 		ret
 CreateNode ENDP
 
-GetNodesFromFile PROC
-	prompt:
-		MOV		edx,OFFSET prompt_filepath
-		CALL	WriteString
-		MOV		edx,OFFSET inputbuffer
-		MOV		ecx,inputmax
-		CALL	ReadString
-
-		MOV		al,BYTE PTR [inputbuffer]
-		CMP		al,quitchar
-		JE		checkemptybuffer
-		JNE		processfile
-
-	checkemptybuffer:
-		MOV		inpbufferindex,1
-		CALL	SkipSpaces
-		MOV		inpbufferindex,0
-		JC		BackToMenu
-		JNC		processfile
-
-	processfile:
-		CALL	OpenInputFile								;eax holds file handle
-
-		MOV		edx,OFFSET inputbuffer						;Buffer will be empty by this point
-		MOV		ecx,inputmax
-		CALL	ClearBuffer
-		CALL	ReadFromFile								;Load from file into buffer
-		JC		filenotfound
-		JNC		parsefile
-
-	parsefile:
-		CALL	CloseFile									;eax holds open file handle; data already read, so close it
-		MOV		edx,OFFSET NodeNames
-
-		XOR		edi,edi										;Empty buffer counter
-
-		getnextpair:
-			XOR		eax,eax
-			XOR		ebx,ebx
-			XOR		ecx,ecx
-
-			MOV		inpbufferindex,edi							;edi is the counter, but we load the counter into bufferinedex before checking next pairs
-
-			CALL	SkipSpaces
-			JC		endoffile
-
-			MOV		edi,inpbufferindex
-
-			MOV		edx,OFFSET inputbuffer
-			getfirstnode:
-				MOV		al,BYTE PTR [edx+edi]
-				CALL	ToUpper
-				MOV		bl,al								;bl stores first node letter.
-				CALL	IsAlphaChar
-				JNC		nodenameinvalid
-
-			getsecondnode: 
-				INC		edi
-
-				MOV		al,BYTE PTR [edx+edi]
-				CALL	ToUpper
-				CMP		al,bl
-				JE		nodeletterssame
-				CALL	IsAlphaChar
-				JNC		nodenameinvalid
-
-				INC		edi									;bufferindex now points to the character after the pair of nodes
-
-				CALL	DeclareNodePair
-				JC		BackToMenu
-
-				JMP		getnextpair
-
-		endoffile:
-			MOV		edx,OFFSET NodeNames
-			MOV		edx,OFFSET inputbuffer					;clear input buffer
-			MOV		ecx,inputmax
-			CALL	ClearBuffer
 
 
-			;check if network has sub-networks. if so, error.*********************************************************************************
-
-
-			;Get number of connections
-			XOR		ecx,ecx									;ecx holds number of connections
-			XOR		edi,edi									;edi is the record offset from NodeNames
-			XOR		esi,esi									;esi is the index from within a record
-			MOV		edx,OFFSET NodeNames
-
-			getrecordCNX:
-				CMP		edi,MaxNodes
-				JG		WireNodes
-				CMP		BYTE PTR[edx],NULL
-				JE		WireNodes
-				
-				MOV		bl,BYTE PTR[edx]
-
-				MOV		esi,1								;esi steps to each connection from within the record, starting at 1
-				XOR		ecx,ecx								;start node's #CNX at 0
-				getnumconnections:
-					CMP		esi,MaxNodeCNX
-					JG		createthisnode
-					MOV		al,BYTE PTR [edx+esi]
-					CMP		BYTE PTR [edx+esi],NULL
-					JE		createthisnode
-					INC		ecx
-					INC		esi
-					JMP		getnumconnections
-
-			steprecord:
-				ADD		edx,MaxNodeCNX+1
-				INC		edi
-				JMP		getrecordCNX
-
-			createthisnode:
-				CALL	CreateNode
-				JMP		steprecord
-
-			WireNodes:
-				MOV		edx,offset NodeBuffer
-
-				;loop through each node address in NodeBuffer. make the connections
-
-
-			JMP		Loadsuccessful
-	nodenameinvalid:
-		MOV		edx,OFFSET error_file_nodenameinvalid
-		CALL	WriteString
-		JMP		BackToMenu
-	nodeletterssame:
-		MOV		edx,OFFSET error_file_dualconnection
-		CALL	WriteString
-		JMP		BackToMenu
-	filenotfound:
-		MOV		edx,OFFSET error_file_notfound
-		CALL	WriteString
-		CALL	Crlf
-		JMP		prompt
-		
-	BackToMenu:
-		CALL	Crlf
-		CALL	Crlf
-		STC
-		JMP		Done
-	Loadsuccessful:
-		CLC
-		JMP		Done
-	Done:
-		ret
-GetNodesFromFile ENDP
-
-GetNodesFromKeyboard PROC
-	
-	Done:
-		ret
-GetNodesFromKeyboard ENDP
-
-InitializeNodes PROC
-	MOV		eax,OFFSET NodeHeap
-	MOV		NodePointer,OFFSET NodeHeap						;NodePointer points to beginning of the NodeHeap
-
-	promptloadtype:
-		MOV		edx,OFFSET prompt_loadnodemenu1
-		CALL	WriteString
-		CALL	Crlf
-		MOV		edx,OFFSET prompt_loadnodemenu2
-		CALL	WriteString
-		CALL	Crlf
-		MOV		edx,OFFSET prompt_loadnodemenu3
-		CALL	WriteString
-		CALL	Crlf
-		MOV		edx,OFFSET prompt_loadnodemenu4
-		CALL	WriteString
-
-		MOV		edx,OFFSET inputbuffer
-		MOV		ecx,inputmax
-		CALL	ReadString
-
-		CMP		BYTE PTR [edx],"1"
-		JE		selection1
-		CMP		BYTE PTR [edx],"2"
-		JE		selection2
-		CMP		BYTE PTR [edx],"3"
-		JE		selection3
-		JMP		promptloadtype
-
-	selection1:
-		CALL	GetNodesFromFile
-		JC		promptloadtype
-		JMP		finalize
-
-	selection2:
-		JMP		finalize
-
-	selection3:
-		JMP		finalize
-
-
-	finalize:
-		
-	ret
-InitializeNodes ENDP
-
-
-UpdateTime PROC
-	ret
-UpdateTime ENDP
-
-TransmitMessages PROC
-	ret
-TransmitMessages ENDP
-
-RecieveMessages PROC
-	ret
-RecieveMessages ENDP
 
 
 
@@ -579,7 +695,7 @@ ToUpper PROC
 ToUpper ENDP
 
 IsAlphaChar PROC
-	CMP		al,"0"
+	CMP		al,"A"
 	JL		notalphanumeric
 	CMP		al,"Z"
 	JG		notalphanumeric
