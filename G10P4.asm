@@ -666,15 +666,6 @@ DeclareNodes PROC
 		ret
 DeclareNodes ENDP
 
-
-
-
-
-
-
-
-
-
 CreateNode PROC
 	; Save registers:
 	PUSHAD
@@ -733,7 +724,21 @@ CreateNode PROC
 		ret
 CreateNode ENDP
 
-GetNextNodeConnection PROC							;Edi MUST be between 0 and MaxNodeCNX
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+GetNextNodeConnection PROC							;Uses EDI as a counter for connections from the NodePointer. EDI MUST be between 0 and MaxNodeCNX
 													;NodeCNXPointer points to the edi+1'th connection of node in NodePointer
 	PUSH	eax
 	PUSH	ecx
