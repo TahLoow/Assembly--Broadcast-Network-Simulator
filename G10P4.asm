@@ -122,60 +122,6 @@ main ENDP
 
 
 
-
-GetFormatFromFile PROC
-	promptforpath:
-		MOV		edx,OFFSET prompt_filepath
-		CALL	WriteString
-		MOV		edx,OFFSET inputbuffer
-		MOV		ecx,inputmax
-		CALL	ReadString
-
-		MOV		al,BYTE PTR [inputbuffer]
-		CMP		al,quitchar
-		JE		checkemptybuffer
-		JNE		processfile
-
-		checkemptybuffer:									;used only after a quit character is detected, to indicate sole intention to exit to menu
-			MOV		inpbufferindex,1
-			CALL	SkipSpaces
-			MOV		inpbufferindex,0
-			JC		BackToMenu
-			JNC		processfile
-
-	processfile:
-		CALL	OpenInputFile								;eax holds file handle
-
-		MOV		edx,OFFSET inputbuffer						;Buffer will be empty by this point
-		MOV		ecx,inputmax
-		CALL	ClearBuffer
-		CALL	ReadFromFile								;Load from file into buffer
-		JC		filenotfound
-
-		CALL	CloseFile									;eax holds open file handle; data held in inputbuffer, so close it
-		JMP		Success
-		
-	filenotfound:
-		MOV		edx,OFFSET error_file_notfound
-		CALL	WriteString
-		JMP		promptforpath
-		
-	BackToMenu:
-		STC
-		JMP		Done
-	Success:
-		CLC
-		JMP		Done
-	Done:
-		ret
-GetFormatFromFile ENDP
-
-GetFormatFromKeyboard PROC
-	
-	Done:
-		ret
-GetFormatFromKeyboard ENDP
-
 ConfigureNetwork PROC
 	PUSHAD
 
@@ -278,6 +224,70 @@ TransmitMessages ENDP
 RecieveMessages PROC
 	ret
 RecieveMessages ENDP
+
+
+
+
+
+
+
+
+
+GetFormatFromFile PROC
+	promptforpath:
+		MOV		edx,OFFSET prompt_filepath
+		CALL	WriteString
+		MOV		edx,OFFSET inputbuffer
+		MOV		ecx,inputmax
+		CALL	ReadString
+
+		MOV		al,BYTE PTR [inputbuffer]
+		CMP		al,quitchar
+		JE		checkemptybuffer
+		JNE		processfile
+
+		checkemptybuffer:									;used only after a quit character is detected, to indicate sole intention to exit to menu
+			MOV		inpbufferindex,1
+			CALL	SkipSpaces
+			MOV		inpbufferindex,0
+			JC		BackToMenu
+			JNC		processfile
+
+	processfile:
+		CALL	OpenInputFile								;eax holds file handle
+
+		MOV		edx,OFFSET inputbuffer						;Buffer will be empty by this point
+		MOV		ecx,inputmax
+		CALL	ClearBuffer
+		CALL	ReadFromFile								;Load from file into buffer
+		JC		filenotfound
+
+		CALL	CloseFile									;eax holds open file handle; data held in inputbuffer, so close it
+		JMP		Success
+		
+	filenotfound:
+		MOV		edx,OFFSET error_file_notfound
+		CALL	WriteString
+		JMP		promptforpath
+		
+	BackToMenu:
+		STC
+		JMP		Done
+	Success:
+		CLC
+		JMP		Done
+	Done:
+		ret
+GetFormatFromFile ENDP
+
+GetFormatFromKeyboard PROC
+	
+	Done:
+		ret
+GetFormatFromKeyboard ENDP
+
+
+
 
 
 
