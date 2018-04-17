@@ -14,6 +14,7 @@ decten		BYTE 10
 quitflag	BYTE 0
 echoflag	BYTE 0
 NULL		EQU 0
+networktime	WORD 0
 
 fileHandle	DWORD 0
 
@@ -36,7 +37,7 @@ MaxNodes			EQU 6
 MaxNodeCNX			EQU 4										;Max Connections per node
 
 packetsize			EQU 8
-
+DefaultTimeToLive	EQU 10
 ;========Buffers & Heaps========;
 NodeNames			BYTE MaxNodes * (1 + MaxNodeCNX) dup(0)			;List of all node **names**, plus MaxNodeCNX bytes for each node to store the connections.
 
@@ -58,6 +59,18 @@ inputmax			EQU 100
 inputbuffer			BYTE inputmax+1 dup(0)							;Keyboard input buffer
 inpbufferindex		DWORD 0											;Used to keep track of inputbuffer positions
 
+
+
+defaultpacket		BYTE NULL,NULL,NULL,NULL
+					WORD NULL,DefaultTimeToLive
+
+pack_dest			BYTE 0
+pack_sender			BYTE 1
+pack_orig			BYTE 2
+pack_rcvtime		BYTE 4
+pack_timetolive		BYTE 6
+
+
 ;========Random Values========;
 spacechar		BYTE 20h,0					;Space character
 tabchar			BYTE 9h,0					;Tab character
@@ -71,19 +84,27 @@ quitchar			BYTE "*"
 DefaultNetwork		BYTE "ab bc cd df fe ea ec bf",0
 
 ;========Output messages========;
+prompt_maxnodes					BYTE "The maximum Nodes for a network are ",0
+prompt_maxcnx					BYTE ". The maximum connections for any given node is ",0
 prompt_loadnodemenu1			BYTE "	1: Load from file",0
 prompt_loadnodemenu2			BYTE "	2: Load from keyboard",0
 prompt_loadnodemenu3			BYTE "	3: Load from default",0
 prompt_loadnodemenu4			BYTE "Please make a selection (1-3): ",0
 prompt_filepath					BYTE "Please enter a file path, or type ""*"" to exit to menu: ",0
+prompt_keyboard					BYTE "Please enter a node network format: ",0
 
-out_time			BYTE "Time is ",0
-out_outgoing		BYTE "Processing outgoing queue of",0
-out_attime			BYTE "At time ",0	
-out_messagefrom		BYTE "a message came from ",0
-out_thereare		BYTE "There are ",0
-out_newmessages		BYTE "new messages ",0
-out_messagegenerated	BYTE "a message is generated ",0
+out_timeis				BYTE "Time is ",0
+out_outgoing			BYTE "	Processing outgoing queue of ",0
+out_attime				BYTE "		At time ",0	
+out_messagefrom			BYTE "a message came from ",0
+out_thereare			BYTE "		There are ",0
+out_newmessages			BYTE "new messages ",0
+out_messagegenerated	BYTE "			A message is generated for ",0
+
+mytime DWORD 0
+
+out_test1				BYTE "Node: ",0
+out_test2				Byte "	CNX: ",0
 
  
 filename	BYTE "C:\Users\macle\Desktop\TEST.txt"
@@ -108,6 +129,9 @@ error_file_cnxredundancy			BYTE "Connection definition redundancy",0
 
 main PROC
 	CALL	InitializeNodes
+	CALL	GetSettings
+
+	;CALL	DisplayNetwork
 
 	Engine:
 		CALL	TransmitMessages
@@ -115,12 +139,114 @@ main PROC
 		CALL	RecieveMessages
 
 		CMP		quitflag,0						;check quit flag
-		JE		Engine
+		JNE		Done
 
-	exit
+		MOV		ecx,999999999
+		buff:
+			DEC		ecx
+			CMP		ecx,0
+			nop
+			JLE		Engine
+			JMP		buff
+
+		
+	Done:
+		exit
 main ENDP
 
 
+GetSettings PROC
+	
+	ret
+GetSettings ENDP
+
+UpdateTime PROC
+	INC		networktime
+	ret
+UpdateTime ENDP
+
+TransmitMessages PROC
+	MOV		edx,OFFSET out_timeis
+	CALL	WriteString
+	MOVSX	eax,networktime
+	CALL	WriteDec
+
+	MOV		NodeIndex,-1
+	NodeLoop:
+		CALL	GetNextNode
+		JC		AllChecked
+
+		MOV		edx,OFFSET out_outgoing
+		CALL	WriteString
+		MOV		ebx,[NodePointer]
+		MOV		al,BYTE PTR[ebx+n_name]
+		CALL	WriteChar
+		CALL	Crlf
+
+		
+
+		MOV		edi,0
+		CNXLoop:
+			CALL	GetNextNodeConnection
+			JC		NextNode
+
+
+
+			JMP		CNXLoop
+
+		NextNode:
+			CALL	Crlf
+			JMP		NodeLoop
+
+	AllChecked:
+		ret
+TransmitMessages ENDP
+
+RecieveMessages PROC
+	ret
+RecieveMessages ENDP
+
+
+
+
+
+
+
+DisplayNetwork PROC
+MOV		NodeIndex,-1
+	NodeLoop:
+		CALL	GetNextNode
+		JC		AllChecked
+
+		MOV		edx,OFFSET out_test1
+		CALL	WriteString
+		MOV		ebx,[NodePointer]
+		MOV		al,BYTE PTR[ebx+n_name]
+		CALL	WriteChar
+		CALL	Crlf
+
+		MOV		edi,0
+		CNXLoop:
+			CALL	GetNextNodeConnection
+			JC		NextNode
+
+			MOV		edx,OFFSET out_test2
+			CALL	WriteString
+			MOV		edx,DWORD PTR[NodeCNXPointer+c_cnx_loc]
+			MOV		edx,[edx]
+			MOV		al,BYTE PTR[edx+n_name]
+			CALL	WriteChar
+			CALL	Crlf
+
+			JMP		CNXLoop
+
+		NextNode:
+			CALL	Crlf
+			JMP		NodeLoop
+
+	AllChecked:
+		ret
+DisplayNetwork ENDP
 
 ConfigureNetwork PROC
 	PUSHAD
@@ -157,6 +283,15 @@ InitializeNodes PROC
 	MOV		NodePointer,OFFSET NodeHeap						;NodePointer points to beginning of the NodeHeap
 
 	promptloadtype:
+		MOV		edx,OFFSET prompt_maxnodes
+		CALL	WriteString
+		MOV		eax,MaxNodes
+		CALL	WriteDec
+		MOV		edx,OFFSET prompt_maxcnx
+		CALL	WriteString
+		MOV		eax,MaxNodeCnx
+		CALL	WriteDec
+		CALL	Crlf
 		MOV		edx,OFFSET prompt_loadnodemenu1
 		CALL	WriteString
 		CALL	Crlf
@@ -213,26 +348,6 @@ InitializeNodes PROC
 InitializeNodes ENDP
 
 
-UpdateTime PROC
-	ret
-UpdateTime ENDP
-
-TransmitMessages PROC
-	ret
-TransmitMessages ENDP
-
-RecieveMessages PROC
-	ret
-RecieveMessages ENDP
-
-
-
-
-
-
-
-
-
 GetFormatFromFile PROC
 	promptforpath:
 		MOV		edx,OFFSET prompt_filepath
@@ -281,7 +396,13 @@ GetFormatFromFile PROC
 GetFormatFromFile ENDP
 
 GetFormatFromKeyboard PROC
-	
+	MOV		edx,OFFSET prompt_keyboard
+	CALL	WriteString
+	CALL	Crlf
+	MOV		edx,OFFSET inputbuffer
+	MOV		ecx,inputmax
+	CALL	ReadString
+
 	Done:
 		ret
 GetFormatFromKeyboard ENDP
