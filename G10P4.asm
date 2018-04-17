@@ -131,10 +131,10 @@ main PROC
 	CALL	InitializeNodes
 	CALL	GetSettings
 
-	;CALL	DisplayNetwork
+	CALL	DisplayNetwork
 
 	Engine:
-		CALL	TransmitMessages
+		;CALL	TransmitMessages
 		CALL	UpdateTime
 		CALL	RecieveMessages
 
