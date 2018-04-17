@@ -213,24 +213,24 @@ RecieveMessages ENDP
 
 
 DisplayNetwork PROC
-MOV		NodeIndex,-1
+	MOV		NodeIndex,-1												;NodeIndex starts at -1 (start at 1st node)
 	NodeLoop:
-		CALL	GetNextNode
-		JC		AllChecked
+		CALL	GetNextNode												;Get next node, place the address into NodePointer
+		JC		AllChecked												;Carry flag if we looped through all nodes, exit procedure
 
-		MOV		edx,OFFSET out_test1
+		MOV		edx,OFFSET out_test1									;print things
 		CALL	WriteString
 		MOV		ebx,[NodePointer]
 		MOV		al,BYTE PTR[ebx+n_name]
 		CALL	WriteChar
 		CALL	Crlf
 
-		MOV		edi,0
+		MOV		edi,0													;edi counts the connections for the given node, starts at 0
 		CNXLoop:
-			CALL	GetNextNodeConnection
-			JC		NextNode
+			CALL	GetNextNodeConnection								;get edi'th connection, place address into NodeCNXPointer
+			JC		NextNode											;carry flag if all connections of the connection have been looped
 
-			MOV		edx,OFFSET out_test2
+			MOV		edx,OFFSET out_test2								;print things
 			CALL	WriteString
 			MOV		edx,DWORD PTR[NodeCNXPointer+c_cnx_loc]
 			MOV		edx,[edx]
@@ -238,11 +238,11 @@ MOV		NodeIndex,-1
 			CALL	WriteChar
 			CALL	Crlf
 
-			JMP		CNXLoop
+			JMP		CNXLoop												;check for next connection
 
 		NextNode:
 			CALL	Crlf
-			JMP		NodeLoop
+			JMP		NodeLoop											;go to the next node
 
 	AllChecked:
 		ret
