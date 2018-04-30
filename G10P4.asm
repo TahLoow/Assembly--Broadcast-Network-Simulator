@@ -8,13 +8,22 @@ INCLUDE Irvine32.inc
 
 .data
 
-dwordsize	EQU 4
-numholder	DWORD 0
-decten		BYTE 10
-quitflag	BYTE 0
-echoflag	BYTE 0
-NULL		EQU 0
-networktime	WORD 0
+true			EQU 1
+false			EQU 0
+dwordsize		EQU 4
+numholder		DWORD 0
+decten			BYTE 10
+quitflag		BYTE 0
+echoflag		BYTE 0
+NULL			EQU 0
+networktime		WORD 0
+NodeSentFlag	BYTE 0
+GlobalSentFlag	BYTE 0
+
+NumCreated		BYTE 0
+PacketsReached_Hops		WORD 0
+PacketsReached	WORD 0
+UniquePackets	WORD 1
 
 fileHandle	DWORD 0
 
@@ -44,18 +53,19 @@ MaxNodes			EQU 10
 MaxNodeCNX			EQU 9										;Max Connections per node
 
 ;========Buffers & Heaps========;
-NodeNames			BYTE MaxNodes * (1 + MaxNodeCNX) dup(0)			;List of all node **names**, plus MaxNodeCNX bytes for each node to store the connections.
+NodeNamesSize		EQU MaxNodes * (1 + MaxNodeCNX)
+NodeNames			BYTE NodeNamesSize+1 dup(0)			;List of all node **names**, plus MaxNodeCNX bytes for each node to store the connections.
 
 NodeBuffer			DWORD MaxNodes dup(0)						;List of pointers that point to beginning of each existing node in NodeHeap. For easier indexing through nodes
 NodeIndex			BYTE 0										;Index for NodeBuffer. 
 
 TestVar				BYTE "^"
 RCVXMTBuffer		BYTE pack_size*MaxNodes*2 dup(0)			;allocation for RCV and XMT buffers
-RCVXMTOffset		SBYTE 0
+PacketPointer		DWORD 0
 
 NodeHeap			BYTE MaxNodes * (n_fixedoffset + MaxNodeCNX * c_cnx_offset) dup(0)			;Byte allocation for maximum nodes & relevant data
-CNXIndex		DWORD 0
-NodeCNXPointer		DWORD 0
+CNXIndex			DWORD 0
+CNXPointer			DWORD 0
 NodePointer			DWORD 0										;Points to the beginning of a node in the NodeHeap.
 
 maxqueuesize		EQU 80										;Max # of packets a node can hold at any given time.
@@ -66,11 +76,18 @@ inputbuffer			BYTE inputmax+1 dup(0)							;Keyboard input buffer
 inpbufferindex		DWORD 0											;Used to keep track of inputbuffer positions
 
 
-packetsource		BYTE "A"
-packetdestin		BYTE "D"
-packetdefaultTTL	BYTE 10
-defaultpacket		BYTE pack_size dup(0)
 
+v_stackmax		EQU 150
+v_stackcount	BYTE 0
+v_stack			BYTE v_stackmax dup(0)
+v_nodesvisited	BYTE MaxNodes dup(0)
+v_numvisited	DWORD 0
+
+
+packetdefaultTTL	EQU 6
+defaultpacket		BYTE pack_size dup(0)
+emptypacket			BYTE pack_size dup(0)
+TotalPackets		BYTE 0
 
 ;========Random Values========;
 spacechar		BYTE 20h,0					;Space character
@@ -95,16 +112,29 @@ prompt_filepath					BYTE "Please enter a file path, or type ""*"" to exit to men
 prompt_keyboard					BYTE "Please enter a node network format: ",0
 prompt_source					BYTE "Please enter a source node (A,B,etc):",0
 prompt_destination				BYTE "Please enter a destination node:",0
+prompt_echo						BYTE "Enter '1' (without quotes) for echo, or '2' (without quotes) for no echo: ",0
 
 out_timeis				BYTE "Time is ",0
-out_outgoing			BYTE "	Processing outgoing queue of ",0
-out_attime				BYTE "		At time ",0	
-out_messagefrom			BYTE "a message came from ",0
-out_thereare			BYTE "		There are ",0
-out_newmessages			BYTE "new messages ",0
-out_messagegenerated	BYTE "			A message is generated for ",0
+out_xmt_processing		BYTE "	Processing outgoing queue of node ",0
+out_xmt_sending			BYTE "		Preparing to send message to node ",0
+out_xmt_sent			BYTE "			The message was sent",0
+out_xmt_notsent			BYTE "			The message was not sent due to echo",0
+out_xmt_attime			BYTE "		At time ",0
+out_xmt_messagefrom		BYTE " a message came from ",0
 
-mytime DWORD 0
+
+out_rcv_processing		BYTE "	Processing receiving buffer of node ",0
+out_rcv_receiving		BYTE "		Message received from node ",0
+out_rcv_reached			BYTE "		Message has reached destination",0
+
+out_thereare			BYTE "		There are ",0
+out_tabs				BYTE "		",0
+out_newmessages			BYTE " new messages generated",0
+out_activemessages		BYTE " active messages",0
+
+out_numreached			BYTE "Total packets reached: ",0
+out_numgenerated		BYTE "Total packets generated: ",0
+out_timeofextinction	BYTE "Total time until all packets died: ",0
 
 out_test1				BYTE "Node: ",0
 out_test2				Byte "	CNX: ",0
@@ -121,6 +151,7 @@ error_file_maxnodeconnections		BYTE "Too many node connections",0
 error_file_cnxredundancy			BYTE "Connection definition redundancy",0
 error_invalidinput					BYTE "That input is invalid, please try again.",0
 error_nodenonexistant				BYTE "There is no node by that name, please try again.",0
+error_validation_networknotwhole	BYTE "Described network not whole",0
 .code
 
 
@@ -142,100 +173,89 @@ main PROC
 		MOV		edx,OFFSET NodeHeap
 		CALL	TransmitMessages
 		CALL	UpdateTime
+		;CALL	PrintAllBuffers					;debug
 		CALL	RecieveMessages
+		CMP		GlobalSentFlag,true
+		JNE		Done
 
 		CMP		quitflag,0						;check quit flag
 		JNE		Done
-
-		MOV		ecx,999999999
-		buff:
-			DEC		ecx
-			CMP		ecx,0
-			nop
-			JLE		Engine
-			JMP		buff
-
+		JMP		Engine
+		
 		
 	Done:
+		CALL		Crlf
+		CALL		Crlf
+		MOV			edx,OFFSET out_numreached
+		CALL		WriteString
+		MOVSX		eax,PacketsReached
+		CALL		WriteDec
+		CALL		Crlf
+
+		MOV			edx,OFFSET out_numgenerated
+		CALL		WriteString
+		MOVSX		eax,UniquePackets
+		CALL		WriteDec
+		CALL		Crlf
+
+		MOV			edx,OFFSET out_timeofextinction
+		CALL		WriteString
+		MOVSX		eax,networktime
+		CALL		WriteDec
+		CALL		Crlf
+
+		MOV			edx,OFFSET inputbuffer
+		MOV			ecx,1
+		CALL		ReadString
 		exit
 main ENDP
 
 
-GetSettings PROC
-	GetSource:
-		MOV		edx,OFFSET prompt_source			;Write prompt
-		CALL	WriteString
+PrintAllBuffers PROC
+	CALL	Crlf
+	MOV		NodeIndex,-1
+	NodeLoop:
+		CALL	GetNextNode
+		JC		AllChecked
 
-		MOV		edx,OFFSET inputbuffer
-		MOV		ecx,inputmax
-		CALL	ClearBuffer
-		CALL	ReadString							;get
-		CALL	SkipSpaces							;skip leading spaces
+		MOV		CNXIndex,-1
+		CNXLoop:
+			CALL	GetNextNodeConnection
+			JC		NodeLoop
 
-		MOV		al,BYTE PTR[inputbuffer]			;al holds first character
+			MOV		edx,CNXPointer
+			ADD		edx,c_cnx_rcv
+			MOV		edx,DWORD PTR[edx]
 
-		MOV		inpbufferindex,1
-		CALL	SkipSpaces							;check if al is only character
-		JNC		S_InvalidError						;if not, try again
+			CMP		BYTE PTR[edx],0
+			JE		CNXLoop
 
-		CALL	GetNodeOfName						;Check if node name exists
-		JC		S_NodeNotFoundError
-		JMP		SetSource
+			MOV		ecx,3
+			ok:
+				MOV		al,BYTE PTR[edx]
+				CALL	WriteChar
+				INC		edx
+				DEC		ecx
+				CMP		ecx,0
+				JG		ok
 
-	SetSource:
-		MOV		BYTE PTR[defaultpacket+pack_source],al
-		JMP		GetDestination
+			MOV		ax,WORD PTR[edx+1]
+			CALL	WriteDec
+			MOV		ax,WORD PTR[edx+3]
+			CALL	WriteDec
 
-	GetDestination:
-		MOV		edx,OFFSET prompt_destination		;Write prompt
-		CALL	WriteString
+			CALL	Crlf
+			JMP		CNXLoop
 
-		MOV		edx,OFFSET inputbuffer
-		CALL	ClearBuffer							;clear
-		MOV		ecx,inputmax
-		CALL	ClearBuffer
-		CALL	ReadString							;get
-		CALL	SkipSpaces							;skip leading spaces
-
-		MOV		al,BYTE PTR[inputbuffer]			;al holds first character
-
-		MOV		inpbufferindex,1
-		CALL	SkipSpaces							;check if al is only character
-		JNC		D_InvalidError						;if not, try again
-
-		CALL	GetNodeOfName						;Check if node name exists
-		JC		D_NodeNotFoundError
-		JMP		SetDest
-
-	SetDest:
-		MOV		BYTE PTR[defaultpacket+pack_dest],al
-		JMP		Done
-
-
-	S_InvalidError:
-		CALL	InvalidInput
-		JMP		GetSource
-	S_NodeNotFoundError:
-		CALL	NodeNonexistant
-		JMP		GetSource
-	D_InvalidError:
-		CALL	InvalidInput
-		JMP		GetDestination
-	D_NodeNotFoundError:
-		CALL	NodeNonexistant
-		JMP		GetSource
-
-	;defaultpacket		BYTE NULL,NULL,NULL,NULL
-	;				WORD NULL,DefaultTimeToLive
-	;packetsource		BYTE "A"
-	;packetdestin		BYTE "D"
-	;packetdefaultTTL	BYTE 10
-	Done:
-		MOV		al,packetdefaultTTL
-		MOV		BYTE PTR[defaultpacket+pack_ttl],al
-		MOV		edx,OFFSET defaultpacket
+	AllChecked:
+		MOV		eax,"	"
+		CALL	WriteChar
+		MOV		ax,UniquePackets
+		MOVSX	eax,UniquePackets
+		CALL	WriteDec
+		CALL	Crlf
 		ret
-GetSettings ENDP
+PrintAllBuffers ENDP
 
 UpdateTime PROC
 	INC		networktime
@@ -247,32 +267,116 @@ TransmitMessages PROC
 	CALL	WriteString
 	MOVSX	eax,networktime
 	CALL	WriteDec
+	CALL	Crlf
+
+	MOV		NodeSentFlag,false
+	MOV		GlobalSentFlag,false
 
 	MOV		NodeIndex,-1
 	NodeLoop:
 		CALL	GetNextNode
 		JC		AllChecked
 
-		MOV		edx,OFFSET out_outgoing
+		MOV		NodeSentFlag,false
+
+		MOV		edx,OFFSET out_xmt_processing
 		CALL	WriteString
-		MOV		ebx,[NodePointer]
-		MOV		al,BYTE PTR[ebx+n_name]
+		MOV		eax,[NodePointer]
+		ADD		eax,n_name
+		MOVSX	eax,BYTE PTR[eax]
 		CALL	WriteChar
 		CALL	Crlf
 
-		
+		CALL	PeekQueue											;Get first value in queue into PacketPointer
+		JC		NextNode											;Queue is empty
+		MOV		esi,PacketPointer									;Store packet address into esi
 
+		;;;;;;													;AtTimeMessageFrom printouts
+		MOV		edx,OFFSET out_xmt_attime
+		CALL	WriteString
+		MOVSX	eax,WORD PTR[esi+pack_rcvtime]
+		CALL	WriteDec
+		MOV		edx,OFFSET out_xmt_messagefrom
+		CALL	WriteString
+		MOVSX	eax,WORD PTR[esi+pack_sender]
+		CALL	WriteChar
+		CALL	Crlf
+
+		MOV		NumCreated,0
 		MOV		CNXIndex,-1
 		CNXLoop:
 			CALL	GetNextNodeConnection
-			JC		NextNode
+			JC		CheckDequeue
+			
+			MOV		eax,CNXPointer+c_cnx_loc						;eax holds the connection's address
+			MOV		eax,DWORD PTR[eax]
+			MOVSX	eax,BYTE PTR[eax+n_name]								;al holds the connection's name
+				
+			MOV		edx,OFFSET out_xmt_sending						;print "Sending" message
+			CALL	WriteString
+			CALL	WriteChar
+			CALL	Crlf
 
+			CMP		echoflag,true				;check for echo
+			JE		DoSend
 
+			CMP		BYTE PTR[esi+pack_sender],al					;if echo is false, and the lastsender != the connection, send the node
+			JNE		DoSend
 
-			JMP		CNXLoop
+			MOV		edx,OFFSET out_xmt_notsent						;message not sent due to echo
+			CALL	WriteString
+			CALL	Crlf
+			JMP		NextConnection									;check next connection
+
+			DoSend:
+				MOV		NodeSentFlag,true
+				MOV		GlobalSentFlag,true
+
+				MOV		eax,NodePointer
+				ADD		eax,n_name
+				MOVSX	eax,BYTE PTR[eax]
+				MOV		BYTE PTR[esi+pack_sender],al				;update sender
+
+				;esi holds the message we send
+				MOV		edi,CNXPointer					;edi holds the xmt buffer
+				ADD		edi,c_cnx_xmt
+				MOV		edi,[edi]
+
+				MOV		ecx,pack_size
+				CLD
+
+				PUSH	esi
+				REP		MOVSB
+				POP		esi
+
+				MOV		edx,OFFSET out_xmt_sent
+				CALL	WriteString
+				CALL	Crlf
+
+				INC		NumCreated
+				JMP		NextConnection
+
+			NextConnection:
+				JMP		CNXLoop
+
+		CheckDequeue:
+			CMP		NodeSentFlag,true				;if a message was sent, dequeue
+			JNE		NextNode				;else, go to next node
+			
+			CALL	DeQueue
+			DEC		UniquePackets			;packet removed from queue, so decrement
+
+			MOV		edx,OFFSET out_tabs
+			CALL	WriteString
+			MOVSX	eax,NumCreated
+			CALL	WriteDec
+			MOV		edx,OFFSET out_newmessages
+			CALL	WriteString
+			CALL	Crlf
+
+			JMP		NextNode
 
 		NextNode:
-			CALL	Crlf
 			JMP		NodeLoop
 
 	AllChecked:
@@ -280,8 +384,428 @@ TransmitMessages PROC
 TransmitMessages ENDP
 
 RecieveMessages PROC
-	ret
+	MOV		edx,OFFSET out_timeis
+	CALL	WriteString
+	MOVSX	eax,networktime
+	CALL	WriteDec
+	CALL	Crlf
+
+	MOV		NodeIndex,-1
+	NodeLoop:
+		CALL	GetNextNode
+		JC		AllChecked
+
+		MOV		edx,OFFSET out_rcv_processing
+		CALL	WriteString
+		MOV		ebx,[NodePointer]
+		MOV		al,BYTE PTR[ebx+n_name]
+		CALL	WriteChar
+		CALL	Crlf
+		
+		MOV		CNXIndex,-1
+		CNXLoop:
+			CALL	GetNextNodeConnection
+			JC		NextNode
+
+			MOV		esi,CNXPointer
+			ADD		esi,c_cnx_rcv
+			MOV		esi,DWORD PTR[esi]
+			MOV		PacketPointer,esi
+
+			MOV		bl,BYTE PTR[esi]								;check first byte of recieving buffer
+			CMP		bl,0
+			JE		NextConnection									;if byte 0 of buffer is 0, we have no message
+
+			MOV		bl,BYTE PTR[esi+pack_dest]
+			CMP		al,bl
+			JE		PacketReached
+
+			MOV		edx,OFFSET out_rcv_receiving
+			CALL	WriteString
+			MOV		al,BYTE PTR[esi+pack_sender]
+			CALL	WriteChar
+			CALL	Crlf
+
+			DEC		WORD PTR[esi+pack_ttl]				;decrement packet's time to live
+			CMP		WORD PTR[esi+pack_ttl],0			;see if it's dead
+			JLE		Kill								;kill if so
+
+			JMP		AddPacket
+
+			AddPacket:
+				MOV		bx,networktime
+				DEC		bx
+				MOV		WORD PTR[esi+pack_rcvtime],bx
+				INC		UniquePackets
+				CALL	EnQueue
+				JMP		NextConnection
+
+			PacketReached:
+				INC		PacketsReached
+				INC		UniquePackets
+				MOV		cx,packetdefaultTTL
+				SUB		cx,WORD PTR[esi+pack_ttl]
+				ADD		PacketsReached_Hops,cx
+
+				MOV		edx,OFFSET out_rcv_reached
+				CALL	WriteString
+				CALL	Crlf
+
+				JMP		Kill
+
+			Kill:
+				CALL	ClearMessage
+				JMP		NextConnection
+
+			NextConnection:
+				JMP		CNXLoop
+
+		ClearMessage:
+			CALL	DeQueue
+			JMP		NextNode
+
+		NextNode:
+			JMP		NodeLoop
+			
+	AllChecked:
+		ret
 RecieveMessages ENDP
+
+
+
+;#############################################			Queue/Packet Procedures
+
+PeekQueue PROC
+	MOV		esi,NodePointer
+	ADD		esi,n_queuefront
+	MOV		esi,DWORD PTR[esi]
+	MOV		PacketPointer,esi
+	CALL	MessageExists							;esi holds address of message
+	JC		Empty
+	JMP		Success
+
+	Success:
+		CLC
+		JMP		Done
+	Empty:
+		STC
+		JMP		Done
+	Done:
+		ret
+PeekQueue ENDP
+
+
+IsQueueEmpty PROC
+	MOV		eax,PacketPointer
+	PUSH	eax
+	CALL	GetQueueInfo						;EDI holds next value, EAX holds address of queue, EBX holds Back pointer, ECX holds Front pointer
+
+	MOV		PacketPointer,ecx
+	CALL	MessageExists
+	JC		Empty
+	JMP		NotEmpty
+
+	NotEmpty:
+		CLC
+		JMP		Done
+	Empty:
+		STC
+		JMP		Done
+	Done:
+		POP		eax
+		MOV		PacketPointer,eax
+		ret
+IsQueueEmpty ENDP
+
+IsQueueFull PROC
+	CALL	GetQueueInfo						;EDI holds next value, EAX holds address of queue, EBX holds Back pointer, ECX holds Front pointer
+	CMP		edi,ecx								;if back+1 == front, full
+	JE		Full
+	JMP		NotFull
+
+	NotFull:
+		CLC
+		JMP		Done
+	Full:
+		STC
+		JMP		Done
+	Done:
+		ret
+IsQueueFull ENDP
+
+EnQueue PROC									;Moves packet from PacketPointer into the queue of NodePointer. Deletes from PacketPointer.
+	CALL	IsQueueFull
+	JC		QueueFull
+
+	CALL	IsQueueEmpty
+	JC		QueueEmpty
+	JMP		Goldilocks
+
+	QueueEmpty:
+		MOV		edi,ecx
+		JMP		Paste
+
+	Goldilocks:
+		MOV		ebx,NodePointer
+		ADD		ebx,n_queueback
+		MOV		DWORD PTR[ebx],edi				;node's back pointer is now relocated
+		JMP		Paste
+
+	Paste:
+		MOV		esi,PacketPointer
+		MOV		ecx,pack_size
+		CLD
+		REP		MOVSB
+
+		CALL	ClearMessage
+
+		JMP		Success
+
+	Success:
+		CLC
+		JMP		Done
+	QueueFull:
+		STC
+		JMP		Done
+	Done:
+		ret
+EnQueue ENDP
+
+DeQueue PROC
+	CALL	IsQueueEmpty
+	JC		IsEmpty
+	JMP		NotEmpty
+
+	NotEmpty:
+		CALL	ClearMessage					;ecx preserved in this procedure
+
+		PUSH	ecx
+		MOV		esi,OFFSET emptypacket
+		MOV		edi,ecx							;ecx holds back of queue
+		MOV		ecx,pack_size
+		CLD
+		REP		MOVSB
+
+		MoveFront:
+			POP		ecx
+
+			CMP		ebx,ecx
+			JE		Done
+
+			ADD		ecx,pack_size
+			ADD		eax,maxqueuesize
+			CMP		ecx,eax
+			JGE		Wrap
+			JMP		UpdatePointer
+			Wrap:
+				MOV		ecx,eax
+				JMP		UpdatePointer
+
+		UpdatePointer:
+			MOV		eax,NodePointer
+			ADD		eax,n_queuefront
+			MOV		DWORD PTR[eax],ecx
+			JMP		Done
+
+	IsEmpty:
+		STC
+		JMP		Done
+	Done:
+		ret
+DeQueue ENDP
+
+GetQueueInfo PROC								;returns: EDI holding next value in the queue, EAX holds address of queue, EBX holds Back pointer, ECX holds Front pointer
+	MOV		eax,NodePointer
+	ADD		eax,n_queueptr
+	MOV		eax,DWORD PTR[eax]					;eax holds address of the queue
+	
+	MOV		ebx,NodePointer
+	ADD		ebx,n_queueback						;ebx holds address of where node's back pointer is stored
+	MOV		ebx,DWORD PTR[ebx]					;edi holds back pointer
+
+	MOV		edi,ebx
+	ADD		edi,pack_size						;edi holds next location in the queue
+		PUSH	eax
+	ADD		eax,maxqueuesize
+	CMP		edi,eax								;see if edi is too far out
+	JGE		Wrap
+	POP		eax
+	JMP		Done
+
+	Wrap:
+		POP		eax
+		MOV		edi,eax
+		JMP		Done
+
+	Done:
+		MOV		ecx,NodePointer
+		ADD		ecx,n_queuefront
+		MOV		ecx,DWORD PTR[ecx]
+
+		ret
+GetQueueInfo ENDP
+
+ClearMessage PROC
+	PUSH	esi
+	PUSH	edi
+	PUSH	ecx
+
+	MOV		esi,OFFSET emptypacket
+	MOV		edi,PacketPointer
+	MOV		ecx,pack_size
+	CLD
+	REP		MOVSB
+
+	POP		ecx
+	POP		edi
+	POP		ecx
+	ret
+ClearMessage ENDP
+
+MessageExists PROC														;edi holds an address of what should hold a message. Sets carry if no message. Moves message address into EDI
+	PUSH	edx
+	MOV		edx,PacketPointer
+	CMP		BYTE PTR[edx],0
+	JE		NonExistant
+	JMP		Existant
+
+	Existant:
+		CLC
+		JMP		Done
+	NonExistant:
+		STC
+		JMP		Done
+	Done:
+		POP		edx
+		ret
+MessageExists ENDP
+
+
+
+
+
+;#############################################			Settings Procedures
+
+
+
+Settings_GetNodeInput PROC
+	CALL	WriteString
+
+	MOV		edx,OFFSET inputbuffer
+	MOV		ecx,inputmax
+	CALL	ClearBuffer
+	CALL	ReadString							;get
+	MOV		inpbufferindex,0
+	CALL	SkipSpaces							;skip leading spaces
+
+	ADD		edx,inpbufferindex
+	MOV		al,BYTE PTR[edx]					;al holds first character (node name)
+	INC		inpbufferindex						;when we call SkipSpaces from this new value, it would start *after* the node name
+	ret
+Settings_GetNodeInput ENDP
+
+Settings_AffirmNodeName PROC						;Checks if the input in the inputbuffer is valid. al holds node's name
+	CALL	SkipSpaces							;check if al is only character
+	JNC		InvalidError						;if not, try again
+
+	CALL	GetNodeOfName						;Check if node name exists
+	JC		NodeNotFoundError
+	JMP		Success
+
+	InvalidError:
+		CALL	InvalidInput
+		STC
+		JMP		Done
+	NodeNotFoundError:
+		CALL	NodeNonexistant
+		STC
+		JMP		Done
+	Success:
+		CLC
+		JMP		Done
+	Done:
+		ret
+Settings_AffirmNodeName ENDP
+
+GetSettings PROC
+	GetSource:
+		MOV		edx,OFFSET prompt_source			;Write prompt
+		CALL	Settings_GetNodeInput
+
+		CALL	Settings_AffirmNodeName
+		JC		GetSource							;al holds capital name of node
+		JMP		SetSource
+	SetSource:
+		MOV		BYTE PTR[defaultpacket+pack_source],al			;source goes into the source portion of the packet
+		MOV		BYTE PTR[defaultpacket+pack_sender],al			;source goes into the sender portion of the packet
+		JMP		GetDestination
+
+	GetDestination:
+		MOV		edx,OFFSET prompt_destination		;Write prompt
+		CALL	Settings_GetNodeInput
+
+		CALL	Settings_AffirmNodeName				;al holds capital name of node
+		JC		GetDestination
+		JMP		SetDest
+	SetDest:
+		MOV		BYTE PTR[defaultpacket+pack_dest],al			;move the destination into the destination portion of the packet
+		JMP		GetEcho
+
+	GetEcho:
+		MOV		edx, OFFSET prompt_echo
+		CALL	WriteString
+
+		MOV		edx,OFFSET inputbuffer
+		MOV		ecx,inputmax
+		CALL	ClearBuffer
+		CALL	ReadString							;get
+
+		MOV		inpbufferindex,0
+		CALL	SkipSpaces							;skip leading spaces
+		ADD		edx,inpbufferindex
+		MOV		al,BYTE PTR[edx]					;al holds first character (node name)
+		
+		CMP		al,"1"
+		JE		SetEchoTrue
+		CMP		al,"2"
+		JE		SetTTL
+		JMP		GetEcho
+
+		SetEchoTrue:
+			MOV		echoflag,true
+			JMP		SetTTL
+
+	SetTTL:
+		MOV		DWORD PTR[defaultpacket+pack_ttl],packetdefaultTTL				;move default packet time to live into packet
+		JMP		PlacePacket
+
+	PlacePacket:
+		MOV		al,BYTE PTR[defaultpacket+pack_source]					;al holds name of source node
+		CALL	GetNodeOfName											;NodePointer holds address of source node
+
+		MOV		PacketPointer,OFFSET DefaultPacket
+		CALL	EnQueue
+
+		JMP		Done
+
+	D_InvalidError:
+		CALL	InvalidInput
+		JMP		GetDestination
+	D_NodeNotFoundError:
+		CALL	NodeNonexistant
+		JMP		GetSource
+
+	Done:
+		ret
+GetSettings ENDP
+
+
+
+
+
+
+
+
 
 
 
@@ -304,12 +828,12 @@ DisplayNetwork PROC
 
 		MOV		CNXIndex,-1													;edi counts the connections for the given node, starts at 0
 		CNXLoop:
-			CALL	GetNextNodeConnection								;get edi'th connection, place address into NodeCNXPointer
+			CALL	GetNextNodeConnection								;get edi'th connection, place address into CNXPointer
 			JC		NextNode											;carry flag if all connections of the connection have been looped
 
 			MOV		edx,OFFSET out_test2								;print things
 			CALL	WriteString
-			MOV		edx,DWORD PTR[NodeCNXPointer+c_cnx_loc]
+			MOV		edx,DWORD PTR[CNXPointer+c_cnx_loc]
 			MOV		edx,[edx]
 			MOV		al,BYTE PTR[edx+n_name]
 			CALL	WriteChar
@@ -332,9 +856,8 @@ ConfigureNetwork PROC
 
 	CALL	DeclareNodes
 	JC			Fail
-
-	;check if network has sub-networks. if so, error.*********************************************************************************
-
+	CALL	ValidateNetworkUnity
+	JC			Fail
 	CALL	SetNumConnections
 	JC			Fail
 	CALL	LinkConnections
@@ -346,6 +869,15 @@ ConfigureNetwork PROC
 		CLC
 		JMP		Done
 	Fail:													;Fail indicates bad data/processing. Go back to menu
+		MOV		ecx,NodeNamesSize
+		MOV		edi,OFFSET NodeNames
+		Clear:
+			MOV		BYTE PTR[edi],0
+			INC		edi
+			DEC		ecx
+			CMP		ecx,0
+			JG		Clear
+
 		CALL Crlf
 		CALL Crlf
 		STC
@@ -485,6 +1017,162 @@ GetFormatFromKeyboard PROC
 GetFormatFromKeyboard ENDP
 
 
+Validation_Push PROC						;al holds node name, pushes to the stack
+	PUSH	ecx
+
+	MOV		ecx,OFFSET v_nodesvisited
+	ADD		ecx,v_numvisited
+	MOV		BYTE PTR[ecx],al
+	INC		v_numvisited
+
+	INC		v_stackcount			;increment the index
+	MOVSX	ecx, v_stackcount		;move index into exc
+	ADD		ecx,OFFSET v_stack
+	MOV		BYTE PTR[ecx], al				;move character into the new slot
+
+	POP		ecx
+	ret
+Validation_Push ENDP
+
+Validation_Pop PROC	;pops whatever is the top of this stack. No prerequisites.
+	PUSH	ecx
+
+	MOVSX	ecx,v_stackcount			;move index into lower portion of exc
+	ADD		ecx,OFFSET v_stack
+	MOV		BYTE PTR[ecx], 0			;move dx into the new slot
+	DEC		v_stackcount
+
+	POP		ecx
+	ret
+Validation_Pop ENDP
+
+Validation_Peek PROC
+	PUSH	ecx
+
+	MOVSX	ecx,v_stackcount			;move index into lower portion of exc
+	ADD		ecx,OFFSET v_stack
+	MOVSX	eax,BYTE PTR[ecx]
+
+	POP		ecx
+	ret
+Validation_Peek ENDP
+
+Validation_NodeVisited PROC
+	PUSH	eax
+	PUSH	ecx
+	PUSH	esi
+
+	MOV		esi,OFFSET v_nodesvisited
+	MOV		al,BYTE PTR[edi]		;al holds name of node
+	MOV		ecx,MaxNodeCNX			;ecx steps through connections
+	CheckVisited:
+		MOV		bl,BYTE PTR[esi]
+		CMP		bl,al
+		JE		Visited
+
+		CMP		bl,0
+		JE		NotVisited
+
+		INC		esi
+		DEC		ecx
+		CMP		ecx,0
+		JLE		NotVisited
+		JMP		CheckVisited
+
+	Visited:
+		STC
+		JMP		Done
+	NotVisited:
+		CLC
+		JMP		Done
+	Done:
+		POP		esi
+		POP		ecx
+		POP		eax
+		ret
+Validation_NodeVisited ENDP
+
+ValidateNetworkUnity PROC
+	MOV		v_numvisited,0
+
+	MOV		edi,OFFSET NodeNames
+	MOV		al,BYTE PTR[edi]
+	CALL	Validation_Push
+	
+	MyWhile:
+		CMP		v_stackcount,0
+		JE		Finale
+
+		CALL	Validation_Peek
+
+		MOV		edi,OFFSET NodeNames
+		GetNodeRecord:
+			CMP		BYTE PTR[edi],0
+			JE		ConnectionsComplete
+
+			CMP		al,BYTE PTR[edi]
+			JE		ScanNode
+			ADD		edi,MaxNodeCNX+1
+
+			JMP		GetNodeRecord
+
+		ScanNode:
+			CNXLoop:
+				INC		edi
+				MOV		al,BYTE PTR[edi]
+
+				CMP		al,0
+				JE		ConnectionsComplete
+
+				CALL	Validation_NodeVisited
+				JC		NextCNX
+				CALL	Validation_Push
+				JMP		MyWhile
+
+			NextCNX:
+				JMP		CNXLoop
+
+		ConnectionsComplete:
+			CALL	Validation_Pop
+			JMP		MyWhile
+
+	;check if all nodes are tagged
+
+	Finale:
+		MOV		edi,OFFSET NodeNames
+		foreach:
+			CMP		BYTE PTR[edi],0
+			JE		Success
+
+			MOV		al,BYTE PTR[edi]
+			CALL	Validation_NodeVisited
+			JNC		Fail
+			ADD		edi,MaxNodeCNX+1
+
+			JMP		foreach
+
+	Success:
+		CLC
+		JMP		Done
+	Fail:
+		MOV		edi,OFFSET v_nodesvisited
+		MOV		ecx,MaxNodes
+		Clear:
+			MOV		BYTE PTR[edi],0
+			INC		edi
+			DEC		ecx
+			CMP		ecx,0
+			JG		Clear
+
+		MOV		edx,OFFSET error_validation_networknotwhole
+		CALL	WriteString
+		STC		
+		JMP		Done
+	Done:
+		ret
+ValidateNetworkUnity ENDP
+
+
 
 
 
@@ -511,7 +1199,7 @@ LinkRCVXMTs PROC
 
 			ADD		eax,pack_size
 
-			MOV		ebx,NodeCNXPointer					;ebx holds a connection
+			MOV		ebx,CNXPointer					;ebx holds a connection
 			MOV		DWORD PTR [ebx+c_cnx_xmt],eax		;move a delegated XMT buffer (eax) into connection's XMT slot
 
 			JMP		XMT_GetConnections
@@ -543,7 +1231,7 @@ LinkRCVXMTs PROC
 
 			MOV		edx,NodePointer						;edx saves the NodePointer, as it gets overwritten in RCV_GetConnections
 
-			MOV		ebx,NodeCNXPointer					;ebx stores NodeConnection
+			MOV		ebx,CNXPointer					;ebx stores NodeConnection
 			PUSH	ebx									;preserve Node Connection
 			MOV		ebx,DWORD PTR [ebx]					;ebx now holds the Node that NodeConnection points to
 			MOV		NodePointer,ebx						;NodePointer holds NodeConnection's pointer (Node address destroyed, needs to be restored)
@@ -551,11 +1239,11 @@ LinkRCVXMTs PROC
 			CALL	GetConnectionOfName					;search for a connection in NodeConnection's pointer's Connections to find a node of name al (Node)
 			JC		Fail
 			
-			MOV		ecx,NodeCNXPointer					;NodeCNXPointer now points to a connection that stores the XMT that acts as this NodeConnection's RCV
+			MOV		ecx,CNXPointer					;CNXPointer now points to a connection that stores the XMT that acts as this NodeConnection's RCV
 			MOV		ecx,DWORD PTR [ecx+c_cnx_xmt]		;ecx holds the shared XMT/RCV.
 
 			POP		ebx									;restore the connection
-			MOV		NodeCNXPointer,ebx					;Restore NodeCNXPointer. This is because GetNextNodeConnection, after the re-loop, will build off of this
+			MOV		CNXPointer,ebx					;Restore CNXPointer. This is because GetNextNodeConnection, after the re-loop, will build off of this
 
 			MOV		DWORD PTR [ebx+c_cnx_rcv],ecx		;Move the RCV address into the RCV slot of ThisConnection
 
@@ -605,7 +1293,7 @@ LinkConnections PROC
 			MOV		al,BYTE PTR [NodeNames+esi+edi+1]
 			CALL	GetNodeOfName						;Overwrite NodePointer to now point to the node that the connection is supposed to
 
-			MOV		ebx,NodeCNXPointer					;ecx points to the beginning of connections for the current node
+			MOV		ebx,CNXPointer					;ecx points to the beginning of connections for the current node
 			MOV		ecx,NodePointer						;ecx points to the address of current nodes' current connection's node (ooooooooof)
 
 			MOV		DWORD PTR [ebx+c_cnx_loc],ecx		;ecx is the address of the given connection's node
@@ -755,12 +1443,17 @@ DeclareNodePair PROC				;al and bl each hold a character that represents a node'
 	;Find first available slot in declaration record to insert a connection
 	MOV		edi,1							;counter through the record of connections. Start at 2nd slot.
 
+	;al holds node A
+	;bl holds node B
+	;ecx holds record for node A
+	;edx holds record for node B
+
 
 	forA:									;looks through edx (record of NodeA)
 		CMP		edi,MaxNodeCNX
 		JG		Fail_CapConnections
-		CMP		BYTE PTR [edi+ecx],bl
-		JE		Fail_ConnectionRedundancy
+		CMP		bl,BYTE PTR [edi+ecx]		;if NodeA name == i'th connection name then we have a redundancy
+		JE		Fail_ConnectionRedundancy	;error out
 		CMP		BYTE PTR [edi+ecx],NULL
 		JE		connectnodeA
 		INC		edi
@@ -773,6 +1466,8 @@ DeclareNodePair PROC				;al and bl each hold a character that represents a node'
 	forB:									;looks through edx (record of NodeB)
 		CMP		edi,MaxNodeCNX
 		JG		Fail_CapConnections
+		CMP		al,BYTE PTR[edi+edx]
+		JE		Fail_ConnectionRedundancy
 		CMP		BYTE PTR [edi+edx],NULL
 		JE		connectnodeB
 		INC		edi
@@ -902,7 +1597,7 @@ CreateNode PROC
 
 	;#### Repeat for front & back queue pointer ####
 	MOV		DWORD PTR [edi + n_queuefront], eax
-	MOV		DWORD PTR [edi + n_queueback], eax
+	MOV		DWORD PTR [edi + n_queueback], eax			;at the beginning, the back must be a DWORD behind the front.
 	 
 	;#### Store NodePointer in NodeBuffer for easy access ####
 	MOV		eax,dwordsize
@@ -948,7 +1643,7 @@ CreateNode ENDP
 
 
 GetNextNodeConnection PROC							;Uses CNXIndex as a counter for connections from the NodePointer. CNXIndex MUST be between -1 and MaxNodeCNX
-													;NodeCNXPointer points to the CNXIndex+1'th connection of node in NodePointer
+													;CNXPointer points to the CNXIndex+1'th connection of node in NodePointer
 	PUSHAD
 	
 	MOV		edx,DWORD PTR [NodePointer]				;edx now holds mem address of the node
@@ -970,7 +1665,7 @@ GetNextNodeConnection PROC							;Uses CNXIndex as a counter for connections fro
 
 		ADD		edx,n_fixedoffset					;edx now points to the beginning of the connections of node N
 		ADD		eax,edx								;eax points to edi'th connection
-		MOV		NodeCNXPointer,eax
+		MOV		CNXPointer,eax
 		JMP		Success
 
 	Success:
@@ -996,7 +1691,7 @@ GetConnectionOfName PROC
 		CALL	GetNextNodeConnection
 		JC		Fail
 
-		MOV		ebx,DWORD PTR[NodeCNXPointer+c_cnx_loc]
+		MOV		ebx,DWORD PTR[CNXPointer+c_cnx_loc]
 		MOV		ebx,DWORD PTR[ebx]
 		CMP		BYTE PTR[ebx+n_name],al
 		JE		Success
