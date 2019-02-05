@@ -1,4 +1,4 @@
-# AssemblyProject4
+# Broadcast Network Simulator
 
 This group project was completed in Microsoft Assembler (MASM). The project's ultimate goal was to simulate a broadcast network, or the passing of messages from source to destination within a defined network/graph.
 
