@@ -2,7 +2,7 @@
 
 This group project was completed in Microsoft Assembler (MASM). The project's ultimate goal was to simulate a broadcast network, or the passing of messages from source to destination within a defined network/graph.
 
-The finished product does the following:
+## The finished product does the following:
 - User chooses input network/graph topology type. (Should node A be connected to B, and B to C the command entered is AB BC):
    - Topology read from keyboard input
    - Topology read from a file
@@ -14,7 +14,7 @@ The finished product does the following:
    - Echo permits a node to send a packet from where the packet was received
 - Places original packet into source node queue, with time-to-live, destination, and other flags in the packet.
 
-- Primary operation begins:
+## Primary operation begins:
    1. Loops through all nodes
    2. Duplicates packets into neighboring node queues, decrementing their TTL
    3. Records all transmitted/received packets
