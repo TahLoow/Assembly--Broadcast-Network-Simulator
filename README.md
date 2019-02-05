@@ -12,10 +12,10 @@ This group project was completed in Microsoft Assembler (MASM). The finished pro
    - Echo permits a node to send a packet from where the packet was received
 - Places original packet into source node queue, with time-to-live, destination, and other flags in the packet.
 - Primary operation begins:
-   1 Loops through all nodes
-   2 Duplicates packets into neighboring node queues, decrementing their TTL
-   3 Records all transmitted/received packets
-   4 Increments program time each time all nodes have been cycled through
+   1. Loops through all nodes
+   2. Duplicates packets into neighboring node queues, decrementing their TTL
+   3. Records all transmitted/received packets
+   4. Increments program time each time all nodes have been cycled through
 - Displays how many packets reached the destination within their TTL, how many were generated in total, and how long until they all died.
 
 
